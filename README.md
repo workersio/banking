@@ -68,6 +68,11 @@ By default, services listen on:
 4. The gateway credits the destination account through the account service.
 5. If crediting fails after debit succeeds, the gateway attempts a rollback.
 
+## Fault Profiles
+
+Network fault profile JSON files are included under `faults/net/`. They describe
+loopback traffic loss and delay patterns for the banking services.
+
 ## Configuration
 
 All settings are read from environment variables.
@@ -117,5 +122,6 @@ RESULT: PASS
 |-- invariants.py  # Consistency checks for balances and transactions.
 |-- protocol.py    # Length-prefixed JSON wire format.
 |-- config.py      # Environment variable parsing.
-`-- API.md         # Wire protocol details.
+|-- API.md         # Wire protocol details.
+`-- faults/net/    # Network fault profiles.
 ```
