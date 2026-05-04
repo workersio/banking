@@ -12,6 +12,7 @@ can both miss the cache.
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import socket
 import socketserver
 import threading
@@ -175,7 +176,7 @@ class GatewayHandler(socketserver.BaseRequestHandler):
                 self._inc("rollback_ok")
                 return
         self._inc("rollback_failed")
-        print(f"ROLLBACK_FAILED:{tx_id}", flush=True)
+        print(f"SERVICE name=gateway event=rollback_failed tx_id={tx_id}", flush=True)
 
     def _balance(self) -> None:
         resp = _rpc(
@@ -213,7 +214,11 @@ def _cache_sweeper(srv: GatewayServer, stop: mp.Event) -> None:
 
 def run_gateway(stop: mp.Event) -> None:
     srv = GatewayServer(config.GATEWAY_ADDR)
-    print(f"[gateway] listening on {config.GATEWAY_ADDR[0]}:{config.GATEWAY_ADDR[1]}", flush=True)
+    print(
+        f"SERVICE name=gateway event=listening "
+        f"addr={config.GATEWAY_ADDR[0]}:{config.GATEWAY_ADDR[1]} pid={os.getpid()}",
+        flush=True,
+    )
     t = threading.Thread(target=_cache_sweeper, args=(srv, stop), daemon=True)
     t.start()
     while not stop.is_set():

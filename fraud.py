@@ -8,6 +8,7 @@ amount cap. A background sweeper evicts stale entries.
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import socket
 import socketserver
 import threading
@@ -94,7 +95,11 @@ def _sweeper(srv: FraudServer, stop: mp.Event) -> None:
 
 def run_fraud(stop: mp.Event) -> None:
     srv = FraudServer(config.FRAUD_ADDR)
-    print(f"[fraud] listening on {config.FRAUD_ADDR[0]}:{config.FRAUD_ADDR[1]}", flush=True)
+    print(
+        f"SERVICE name=fraud event=listening "
+        f"addr={config.FRAUD_ADDR[0]}:{config.FRAUD_ADDR[1]} pid={os.getpid()}",
+        flush=True,
+    )
     t = threading.Thread(target=_sweeper, args=(srv, stop), daemon=True)
     t.start()
     while not stop.is_set():

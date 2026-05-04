@@ -9,6 +9,7 @@ balance before either commits.
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import socket
 import socketserver
 import sqlite3
@@ -255,7 +256,11 @@ class AccountHandler(socketserver.BaseRequestHandler):
 def run_accounts(stop: mp.Event) -> None:
     _init_db()
     srv = AccountServer(config.ACCOUNTS_ADDR)
-    print(f"[accounts] listening on {config.ACCOUNTS_ADDR[0]}:{config.ACCOUNTS_ADDR[1]}", flush=True)
+    print(
+        f"SERVICE name=accounts event=listening "
+        f"addr={config.ACCOUNTS_ADDR[0]}:{config.ACCOUNTS_ADDR[1]} pid={os.getpid()}",
+        flush=True,
+    )
     while not stop.is_set():
         srv.handle_request()
     srv.server_close()

@@ -80,6 +80,7 @@ All settings are read from environment variables.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BANK_LOCAL` | `1` | Set to `0` to bind services to distinct loopback IPs on port 9000. |
+| `BANK_RUN_ID` | generated | Optional run identifier printed in logs and summary lines. |
 | `BANK_TRANSFERS` | `10` | Number of generated transfers to execute. |
 | `BANK_CONCURRENCY` | `1` | Number of concurrent transfer requests. |
 | `BANK_SEED` | `42` | Seed used to generate transfers. |
@@ -94,21 +95,65 @@ All settings are read from environment variables.
 | `BANK_INITIAL_BALANCE` | `10000` | Starting balance per account in cents. |
 | `BANK_PAIRED_KEYS` | `0` | Set to `1` to reuse idempotency keys in pairs. |
 
-## Example Output
+## Logging
+
+`main.py` prints sectioned human-readable logs and compact key/value summary
+lines. For large sweeps, the most useful machine-readable lines are:
+
+- `RUN` identifies the execution.
+- `CHECK` reports each invariant with structured details.
+- `RUNTIME_CHECK` reports service health and gateway stats availability.
+- `SUMMARY` reports transfer counts and assertion status.
+- `GATEWAY_STATS` reports service counters.
+- `FINAL` reports the run result and elapsed time.
+
+## Example Output Excerpt
 
 ```text
 BANKING_VERSION: 1
+
+========================================================================
+Banking Run
+========================================================================
+RUN id=demo-log-check version=1 started_at=2026-05-04T00:10:13-0700
+Run configuration:
+  bank_seed         : 42
+  transfers         : 10
+  concurrency       : 1
+
+========================================================================
+Transfer Execution
+========================================================================
+[   1032 ms] transfers    submitting batch attempted=10 concurrency=1
+[   1053 ms] transfers    batch complete attempted=10 succeeded=10 failed=0 duration_ms=20
+Transfer errors: none
+
+========================================================================
+Assertions
+========================================================================
+[OK  ] I1 conservation: total=50000 expected=50000
+CHECK id=I1 name=conservation status=PASS summary="total=50000 expected=50000" details={"actual_total":50000,"delta":0,"expected_total":50000}
+[OK  ] I2 non_negative: all account balances are non-negative
+CHECK id=I2 name=non_negative status=PASS summary="all account balances are non-negative" details={"negative_accounts":{}}
+
+========================================================================
+Runtime Checks
+========================================================================
+[PASS] services: 0 runtime failures
+RUNTIME_CHECK name=services status=PASS details=[]
+[PASS] gateway_stats: gateway stats collected
+RUNTIME_CHECK name=gateway_stats status=PASS details={"debit_timeout":0,"fail":0,"fraud_denied":0,"fraud_timeout":0,"ok":10,"rollback_failed":0,"rollback_ok":0,"rollback_retries":0}
+
+========================================================================
+Machine Summary
+========================================================================
+SUMMARY run_id=demo-log-check attempted=10 succeeded=10 failed=0 transfer_duration_ms=20 db_read=ok assertions_failed=0 runtime_failures=0 gateway_stats=ok
+TRANSFER_ERRORS none=true
+GATEWAY_STATS debit_timeout=0 fail=0 fraud_denied=0 fraud_timeout=0 ok=10 rollback_failed=0 rollback_ok=0 rollback_retries=0
 transfers=10 succeeded=10 failed=0
-fraud_denied=0 fraud_timeout=0
-debit_timeout=0
-rollback_ok=0 rollback_failed=0 rollback_retries=0
 BALANCES A=10481 B=10139 C=13305 D=8082 E=7993 total=50000
-INVARIANT I1 conservation PASS total=50000 expected=50000
-INVARIANT I2 non_negative PASS
-INVARIANT I3 atomicity PASS orphaned_debits=0
-INVARIANT I4 tx_log_integrity PASS
-elapsed_ms=1131
 RESULT: PASS
+FINAL run_id=demo-log-check status=PASS elapsed_ms=1114
 ```
 
 ## Files
