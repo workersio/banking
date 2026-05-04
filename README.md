@@ -70,8 +70,8 @@ By default, services listen on:
 
 ## Fault Profiles
 
-Network fault profile JSON files are included under `faults/net/`. They describe
-loopback traffic loss and delay patterns for the banking services.
+Network fault profile JSON files are included under `.workers/fault/net/`.
+They describe loopback traffic loss and delay patterns for the banking services.
 
 ## Configuration
 
@@ -123,5 +123,6 @@ RESULT: PASS
 |-- protocol.py    # Length-prefixed JSON wire format.
 |-- config.py      # Environment variable parsing.
 |-- API.md         # Wire protocol details.
-`-- faults/net/    # Network fault profiles.
+`-- .workers/fault/net/
+    `-- *.json     # Network fault profiles.
 ```
