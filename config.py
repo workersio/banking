@@ -1,12 +1,12 @@
-"""Workload configuration — all tunables read from environment variables.
+"""Application configuration; all tunables read from environment variables.
 
-Inside the wenv guest each service binds a distinct loopback IP.
-Set BANK_LOCAL=1 to run on localhost with separate ports (for development).
+By default each service binds to localhost with separate ports. Set
+BANK_LOCAL=0 to bind each service to a distinct loopback IP.
 """
 
 import os
 
-_LOCAL = os.environ.get("BANK_LOCAL", "0") == "1"
+_LOCAL = os.environ.get("BANK_LOCAL", "1") == "1"
 
 if _LOCAL:
     GATEWAY_ADDR  = ("127.0.0.1", 9100)

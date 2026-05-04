@@ -5,8 +5,8 @@ TCP connection per downstream RPC (no shared sockets between handler
 threads). Failed credits trigger rollback with exponential backoff.
 
 The idempotency cache has a TOCTOU race: the lock is released between
-the cache check and the cache write, so duplicate requests under
-concurrent scheduling can both miss the cache.
+the cache check and the cache write, so duplicate concurrent requests
+can both miss the cache.
 """
 
 from __future__ import annotations

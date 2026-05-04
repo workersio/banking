@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "lo": {
-    "rules": [{
-      "match": {"dst": "127.0.0.20"},
-      "loss": {"percent": 100}
-    }]
-  }
-}

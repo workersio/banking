@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Driver — starts all services, fires transfers, checks invariants.
+"""Starts all services, fires transfers, and checks invariants.
 
 Spawns gateway, accounts, and fraud as separate processes, generates a
 batch of transfers, fires them with configurable concurrency, then reads
@@ -82,12 +82,12 @@ def _fire_transfers(transfers: list[dict], concurrency: int) -> tuple[int, int]:
         threads = []
         for t in transfers:
             sem.acquire()
-            def worker(transfer=t):
+            def run_transfer(transfer=t):
                 try:
                     fire_one(transfer)
                 finally:
                     sem.release()
-            th = threading.Thread(target=worker, daemon=True)
+            th = threading.Thread(target=run_transfer, daemon=True)
             th.start()
             threads.append(th)
         for th in threads:
@@ -172,14 +172,15 @@ def main() -> int:
     violated = False
     for inv_id, name, (ok, detail) in checks:
         status = "PASS" if ok else "FAIL"
-        print(f"INVARIANT {inv_id} {name} {status} {detail}", flush=True)
+        detail_suffix = f" {detail}" if detail else ""
+        print(f"INVARIANT {inv_id} {name} {status}{detail_suffix}", flush=True)
         if not ok:
             print(f"INVARIANT_VIOLATED:{inv_id}", flush=True)
             violated = True
 
-    virt_ms = (time.monotonic_ns() - t0) // 1_000_000
-    print(f"virt_total_ms={virt_ms}", flush=True)
-    print(f"WORKLOAD: {'FAIL' if violated else 'PASS'}", flush=True)
+    elapsed_ms = (time.monotonic_ns() - t0) // 1_000_000
+    print(f"elapsed_ms={elapsed_ms}", flush=True)
+    print(f"RESULT: {'FAIL' if violated else 'PASS'}", flush=True)
 
     return 1 if violated else 0
 

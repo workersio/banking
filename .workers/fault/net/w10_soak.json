@@ -1,9 +1,0 @@
-{
-  "version": 1,
-  "lo": {
-    "default": {
-      "loss": {"percent": 5},
-      "delay": {"time_ms": 5, "jitter_ms": 3}
-    }
-  }
-}

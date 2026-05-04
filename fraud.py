@@ -1,8 +1,8 @@
 """Fraud service — velocity-based rate limiting.
 
-Tracks per-account transfer frequency using in-memory sliding windows
-over virtual time. Denies transfers that exceed the velocity limit or
-single-transaction amount cap. A background sweeper evicts stale entries.
+Tracks per-account transfer frequency using in-memory sliding windows.
+Denies transfers that exceed the velocity limit or single-transaction
+amount cap. A background sweeper evicts stale entries.
 """
 
 from __future__ import annotations

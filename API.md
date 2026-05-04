@@ -13,7 +13,9 @@ socket for each RPC.
 
 ---
 
-## Gateway (127.0.0.10:9000)
+## Gateway
+
+Default local address: `127.0.0.1:9100`.
 
 The gateway is the only service the driver talks to.
 
@@ -92,7 +94,9 @@ Returns gateway-internal counters.
 
 ---
 
-## Account Service (127.0.0.30:9000)
+## Account Service
+
+Default local address: `127.0.0.1:9300`.
 
 SQLite-backed. All write operations are wrapped in transactions with a
 `(tx_id, op)` primary key to prevent duplicate application.
@@ -210,7 +214,9 @@ Returns the full transaction log, ordered by creation time.
 
 ---
 
-## Fraud Service (127.0.0.20:9000)
+## Fraud Service
+
+Default local address: `127.0.0.1:9200`.
 
 Stateless across restarts. Tracks velocity in memory.
 
