@@ -54,7 +54,7 @@ Step 5 — Wait for sync to complete, then re-run the simulation to verify:
 ```bash
 wio projects ls --format json
 ```
-Repeat every 5 seconds until the project's `syncStatus` is `"synced"`.
+It should ideally get synced in 5 seconds so wait for a little while.
 
 Then re-simulate:
 ```bash
