@@ -7,7 +7,7 @@ allowed-tools:
   - Bash(wio *)
 ---
 
-# /wio simulate faults
+# /wio simulate network faults
 
 Run a fault-injected simulation (depth 2, intermittent network loss) against the banking project:
 
@@ -21,12 +21,9 @@ wio workloads ls --state pending
 ```
 Repeat every 15 seconds until no pending workloads remain.
 
-Then show results:
-```bash
-wio workloads ls
-```
+Then summary of results in a nice formatted table:
 
-# /wio investigate
+# /wio investigate failures
 
 Find the failed workloads, read their logs, diagnose the bug, and fix it.
 
