@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "seed": "0000000000001007",
+  "lo": {
+    "default": {
+      "delay": {
+        "time_ms": 2
+      }
+    },
+    "rules": [
+      {
+        "match": {
+          "proto": "tcp",
+          "dport": 9100,
+          "bidirectional": true
+        },
+        "delay": {
+          "time_ms": 30,
+          "jitter_ms": 10,
+          "correlation": 0.2
+        },
+        "loss": {
+          "percent": 0.5
+        }
+      },
+      {
+        "match": {
+          "proto": "tcp",
+          "dport": 9200,
+          "bidirectional": true
+        },
+        "delay": {
+          "time_ms": 80,
+          "jitter_ms": 20,
+          "correlation": 0.25
+        },
+        "loss": {
+          "percent": 2,
+          "correlation": 0.3
+        }
+      },
+      {
+        "match": {
+          "proto": "tcp",
+          "dport": 9300,
+          "bidirectional": true
+        },
+        "delay": {
+          "time_ms": 120,
+          "jitter_ms": 30,
+          "correlation": 0.3
+        },
+        "loss": {
+          "percent": 1,
+          "correlation": 0.2
+        }
+      }
+    ]
+  }
+}

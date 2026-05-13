@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "seed": "0000000000001003",
+  "lo": {
+    "default": {
+      "delay": {
+        "time_ms": 1
+      }
+    },
+    "rules": [
+      {
+        "match": {
+          "proto": "tcp",
+          "dport": 9200,
+          "bidirectional": true
+        },
+        "delay": {
+          "time_ms": 40,
+          "jitter_ms": 15,
+          "correlation": 0.4,
+          "distribution": "normal"
+        },
+        "loss": {
+          "kind": "gemodel",
+          "gemodel": {
+            "p": 8,
+            "r": 85,
+            "h": 15,
+            "k": 99
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "seed": "0000000000001006",
+  "lo": {
+    "default": {
+      "delay": {
+        "time_ms": 10,
+        "jitter_ms": 3,
+        "correlation": 0.15
+      },
+      "rate": {
+        "bps": 250000
+      },
+      "slot": {
+        "min_us": 1000,
+        "max_us": 12000
+      }
+    }
+  }
+}

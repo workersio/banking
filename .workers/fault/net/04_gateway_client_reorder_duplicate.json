@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "seed": "0000000000001004",
+  "lo": {
+    "default": {
+      "delay": {
+        "time_ms": 1
+      }
+    },
+    "rules": [
+      {
+        "match": {
+          "proto": "tcp",
+          "dport": 9100,
+          "bidirectional": true
+        },
+        "delay": {
+          "time_ms": 50,
+          "jitter_ms": 10,
+          "correlation": 0.2
+        },
+        "reorder": {
+          "percent": 20,
+          "correlation": 0.25,
+          "gap": 5
+        },
+        "duplicate": {
+          "percent": 2,
+          "correlation": 0.2
+        }
+      }
+    ]
+  }
+}
