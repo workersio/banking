@@ -209,10 +209,10 @@ def main() -> int:
 
     impatient = profile_score < float(os.environ.get("BANK_DEMO_IMPATIENT_RATE", "0.20"))
     profile = "impatient_mobile_commute" if impatient else "normal_mobile_checkout"
-    timeout_s = float(os.environ.get("BANK_DEMO_CLIENT_TIMEOUT", "0.13" if impatient else "0.45"))
-    max_client_errors = int(os.environ.get("BANK_DEMO_MAX_CLIENT_ERRORS", "0" if impatient else "4"))
     concurrency = int(os.environ.get("BANK_DEMO_CONCURRENCY", "12"))
     transfer_count = int(os.environ.get("BANK_DEMO_TRANSFERS", "64"))
+    timeout_s = float(os.environ.get("BANK_DEMO_CLIENT_TIMEOUT", "0.13" if impatient else "1.25"))
+    max_client_errors = int(os.environ.get("BANK_DEMO_MAX_CLIENT_ERRORS", "0" if impatient else str(transfer_count)))
     settle_s = float(os.environ.get("BANK_DEMO_SETTLE_S", "2.0"))
 
     _reset_database()

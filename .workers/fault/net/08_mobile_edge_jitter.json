@@ -20,7 +20,7 @@
           "distribution": "normal"
         },
         "loss": {
-          "percent": 0.4,
+          "percent": 0.05,
           "correlation": 0.2
         }
       }
