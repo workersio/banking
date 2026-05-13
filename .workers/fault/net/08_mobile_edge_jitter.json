@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "lo": {
+    "default": {
+      "delay": {
+        "time_ms": 2
+      }
+    },
+    "rules": [
+      {
+        "match": {
+          "proto": "tcp",
+          "dport": 9100,
+          "bidirectional": true
+        },
+        "delay": {
+          "time_ms": 70,
+          "jitter_ms": 35,
+          "correlation": 0.35,
+          "distribution": "normal"
+        },
+        "loss": {
+          "percent": 0.4,
+          "correlation": 0.2
+        }
+      }
+    ]
+  }
+}
