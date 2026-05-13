@@ -14,14 +14,10 @@
           "bidirectional": true
         },
         "delay": {
-          "time_ms": 70,
-          "jitter_ms": 35,
+          "time_ms": 110,
+          "jitter_ms": 25,
           "correlation": 0.35,
           "distribution": "normal"
-        },
-        "loss": {
-          "percent": 0.05,
-          "correlation": 0.2
         }
       }
     ]
