@@ -35,8 +35,6 @@ SINGLE_TX_LIMIT = int(os.environ.get("BANK_SINGLE_TX_LIMIT", "5000"))
 ROLLBACK_MAX_RETRIES = int(os.environ.get("BANK_ROLLBACK_RETRIES", "3"))
 ROLLBACK_BASE_S      = float(os.environ.get("BANK_ROLLBACK_BASE_S", "1"))
 
-DUPLICATE_EVERY = int(os.environ.get("BANK_DUPLICATE_EVERY", "0"))
-
 DB_PATH = "/tmp/banking.db"
 
 BIND_WAIT_S    = 1.0

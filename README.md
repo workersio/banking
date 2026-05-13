@@ -77,8 +77,10 @@ By default, services listen on:
 ## Workload
 
 `.workers/workload.py` runs the app the way a client would use it: it starts
-the services, submits concurrent transfer traffic, includes occasional
-duplicate client retries, and lets the app print its own invariant checks.
+the services through `main.py`, composes realistic transaction phases from the
+app's client primitives, submits sequential and concurrent traffic, includes
+duplicate client retries and fraud-probe attempts, and lets the app print its
+own invariant checks.
 
 ## Configuration
 
@@ -87,8 +89,8 @@ All settings are read from environment variables.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BANK_RUN_ID` | generated | Optional run identifier printed in logs and summary lines. |
-| `BANK_TRANSFERS` | `10` | Number of generated transfers to execute. |
-| `BANK_CONCURRENCY` | `1` | Number of concurrent transfer requests. |
+| `BANK_TRANSFERS` | `10` | Number of generated transfers to execute in the default `main.py` smoke run. |
+| `BANK_CONCURRENCY` | `1` | Number of concurrent transfer requests for the default `main.py` smoke run. |
 | `BANK_SETTLE_S` | `15` | Seconds to wait after requests finish. |
 | `BANK_FRAUD_TIMEOUT` | `2` | Fraud service timeout in seconds. |
 | `BANK_ACCT_TIMEOUT` | `5` | Account service timeout in seconds. |
@@ -98,7 +100,7 @@ All settings are read from environment variables.
 | `BANK_ROLLBACK_RETRIES` | `3` | Max rollback attempts. |
 | `BANK_ROLLBACK_BASE_S` | `1` | Initial rollback backoff in seconds. |
 | `BANK_INITIAL_BALANCE` | `10000` | Starting balance per account in cents. |
-| `BANK_DUPLICATE_EVERY` | `0` | Repeat every Nth generated transfer as a duplicate client retry. |
+| `BANK_DUPLICATE_EVERY` | `25` in `.workers/workload.py` | Add a duplicate client retry every Nth burst transfer in the workload wrapper. |
 
 ## Logging
 

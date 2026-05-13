@@ -15,6 +15,7 @@ from typing import Any
 import json
 import multiprocessing as mp
 import os
+import random
 import socket
 import sqlite3
 import sys
@@ -40,6 +41,13 @@ class TransferBatchResult:
     success_tx_ids: set[str]
     success_tx_ids_by_key: dict[str, set[str]]
     errors_by_key: dict[str, set[str]]
+
+
+@dataclass(frozen=True)
+class TransferPhase:
+    name: str
+    transfers: list[dict[str, Any]]
+    concurrency: int
 
 
 @dataclass
@@ -128,46 +136,90 @@ def _rpc_to_gateway(msg: dict[str, Any], timeout: float = 3.0) -> dict[str, Any]
             pass
 
 
-def _generate_transfers(n: int, duplicate_every: int = 0) -> list[dict[str, Any]]:
-    import random
+def make_transfer(src: str, dst: str, amount: int, idempotency_key: str) -> dict[str, Any]:
+    """Build a gateway TRANSFER request."""
+    return {
+        "op": "TRANSFER",
+        "src": src,
+        "dst": dst,
+        "amount": amount,
+        "idempotency_key": idempotency_key,
+    }
 
-    rng = random.Random(_seed_value())
-    transfers = []
-    for i in range(n):
-        should_duplicate = (
-            duplicate_every > 0
-            and i > 0
-            and i % duplicate_every == 0
-            and transfers
+
+def choose_destination(rng: random.Random, src: str) -> str:
+    return rng.choice([account for account in config.ACCOUNTS if account != src])
+
+
+def make_random_transfer(
+    rng: random.Random,
+    index: int,
+    *,
+    key_prefix: str,
+    source: str | None = None,
+    destination: str | None = None,
+    amount_min: int = 100,
+    amount_max: int = 2000,
+) -> dict[str, Any]:
+    src = source or rng.choice(config.ACCOUNTS)
+    dst = destination or choose_destination(rng, src)
+    if dst == src:
+        dst = choose_destination(rng, src)
+    amount = rng.randint(amount_min, amount_max)
+    return make_transfer(src, dst, amount, f"{key_prefix}-{index:04d}")
+
+
+def make_random_transfers(
+    rng: random.Random,
+    count: int,
+    *,
+    key_prefix: str,
+    start_index: int = 0,
+    amount_min: int = 100,
+    amount_max: int = 2000,
+) -> list[dict[str, Any]]:
+    return [
+        make_random_transfer(
+            rng,
+            start_index + i,
+            key_prefix=key_prefix,
+            amount_min=amount_min,
+            amount_max=amount_max,
         )
-        if should_duplicate:
-            transfers.append(dict(transfers[-1]))
-            continue
-        src = rng.choice(config.ACCOUNTS)
-        dst = rng.choice([a for a in config.ACCOUNTS if a != src])
-        amount = rng.randint(100, 2000)
-        idem_key = f"key-{i:04d}"
-        transfers.append({
-            "op": "TRANSFER",
-            "src": src,
-            "dst": dst,
-            "amount": amount,
-            "idempotency_key": idem_key,
-        })
-    return transfers
+        for i in range(count)
+    ]
 
 
-def _summarize_transfer_plan(transfers: list[dict[str, Any]]) -> dict[str, Any]:
+def duplicate_transfer(transfer: dict[str, Any]) -> dict[str, Any]:
+    """Return a client retry that preserves the idempotency key."""
+    return dict(transfer)
+
+
+def transfer_phase(name: str, transfers: list[dict[str, Any]], concurrency: int) -> TransferPhase:
+    """Build a client submission phase with its own concurrency level."""
+    return TransferPhase(name=name, transfers=transfers, concurrency=concurrency)
+
+
+def _summarize_transfer_plan(
+    phases: list[TransferPhase],
+    plan: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    transfers = [transfer for phase in phases for transfer in phase.transfers]
     routes = Counter(f"{t['src']}->{t['dst']}" for t in transfers)
     sources = Counter(t["src"] for t in transfers)
     total_amount = sum(t["amount"] for t in transfers)
-    return {
+    summary = {
         "generated": len(transfers),
         "total_amount_cents": total_amount,
         "unique_routes": len(routes),
         "top_routes": dict(routes.most_common(SAMPLE_LIMIT)),
         "source_counts": dict(sorted(sources.items())),
+        "phases": {phase.name: len(phase.transfers) for phase in phases},
+        "phase_concurrency": {phase.name: phase.concurrency for phase in phases},
     }
+    if plan:
+        summary.update(plan)
+    return summary
 
 
 def _print_transfer_samples(transfers: list[dict[str, Any]]) -> None:
@@ -262,6 +314,49 @@ def _fire_transfers(transfers: list[dict[str, Any]], concurrency: int) -> Transf
     )
 
 
+def _failed_batch(transfers: list[dict[str, Any]], error: str) -> TransferBatchResult:
+    return TransferBatchResult(
+        attempted=len(transfers),
+        succeeded=0,
+        failed=len(transfers),
+        duration_ms=0,
+        error_counts=Counter({error: len(transfers)}),
+        sample_failures=[],
+        success_tx_ids=set(),
+        success_tx_ids_by_key={},
+        errors_by_key={},
+    )
+
+
+def _combine_batch_results(results: list[TransferBatchResult]) -> TransferBatchResult:
+    combined_errors: Counter[str] = Counter()
+    sample_failures: list[dict[str, Any]] = []
+    success_tx_ids: set[str] = set()
+    success_tx_ids_by_key: dict[str, set[str]] = {}
+    errors_by_key: dict[str, set[str]] = {}
+
+    for result in results:
+        combined_errors.update(result.error_counts)
+        sample_failures.extend(result.sample_failures[:max(0, SAMPLE_LIMIT - len(sample_failures))])
+        success_tx_ids.update(result.success_tx_ids)
+        for key, tx_ids in result.success_tx_ids_by_key.items():
+            success_tx_ids_by_key.setdefault(key, set()).update(tx_ids)
+        for key, errors in result.errors_by_key.items():
+            errors_by_key.setdefault(key, set()).update(errors)
+
+    return TransferBatchResult(
+        attempted=sum(result.attempted for result in results),
+        succeeded=sum(result.succeeded for result in results),
+        failed=sum(result.failed for result in results),
+        duration_ms=sum(result.duration_ms for result in results),
+        error_counts=combined_errors,
+        sample_failures=sample_failures[:SAMPLE_LIMIT],
+        success_tx_ids=success_tx_ids,
+        success_tx_ids_by_key=success_tx_ids_by_key,
+        errors_by_key=errors_by_key,
+    )
+
+
 def _check_idempotency(
     transfers: list[dict[str, Any]],
     batch: TransferBatchResult,
@@ -321,7 +416,13 @@ def _tx_operation_counts(tx_log: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def _print_run_configuration(run_id: str) -> None:
+def _print_run_configuration(
+    run_id: str,
+    *,
+    transfer_count: int,
+    concurrency: int,
+    settle_s: int,
+) -> None:
     _print_kv_table("Run configuration", {
         "run_id": run_id,
         "pid": os.getpid(),
@@ -330,10 +431,9 @@ def _print_run_configuration(run_id: str) -> None:
         "accounts": ",".join(config.ACCOUNTS),
         "initial_balance": config.INITIAL_BALANCE,
         "initial_total": config.INITIAL_TOTAL,
-        "transfers": config.TRANSFERS,
-        "concurrency": config.CONCURRENCY,
-        "duplicate_every": config.DUPLICATE_EVERY,
-        "settle_s": config.SETTLE_S,
+        "transfers": transfer_count,
+        "concurrency": concurrency,
+        "settle_s": settle_s,
         "fraud_timeout_s": config.FRAUD_TIMEOUT,
         "account_timeout_s": config.ACCT_TIMEOUT,
         "velocity_window_s": config.VELOCITY_WINDOW,
@@ -427,15 +527,28 @@ def _record_shutdown(
         _event(start_ns, "services", "stopped", name=name, pid=proc.pid, exitcode=proc.exitcode)
 
 
-def main() -> int:
+def run_banking_app(
+    phases: list[TransferPhase],
+    *,
+    settle_s: int,
+    run_id: str | None = None,
+    plan_summary: dict[str, Any] | None = None,
+) -> int:
     start_ns = time.monotonic_ns()
-    run_id = _run_id()
+    run_id = run_id or _run_id()
+    transfers = [transfer for phase in phases for transfer in phase.transfers]
+    max_concurrency = max((phase.concurrency for phase in phases), default=0)
     runtime_failures: list[dict[str, Any]] = []
     print("BANKING_VERSION: 1", flush=True)
 
     _section("Banking Run")
     _line("RUN", id=run_id, version=1, started_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
-    _print_run_configuration(run_id)
+    _print_run_configuration(
+        run_id,
+        transfer_count=len(transfers),
+        concurrency=max_concurrency,
+        settle_s=settle_s,
+    )
 
     from accounts import run_accounts
     from fraud import run_fraud
@@ -457,33 +570,37 @@ def main() -> int:
     startup_failed = len(runtime_failures) > 0
 
     _section("Transfer Plan")
-    transfers = _generate_transfers(config.TRANSFERS, duplicate_every=config.DUPLICATE_EVERY)
-    _print_kv_table("Generated transfers", _summarize_transfer_plan(transfers))
+    _print_kv_table("Generated transfers", _summarize_transfer_plan(phases, plan_summary))
     _print_transfer_samples(transfers)
 
     _section("Transfer Execution")
-    _event(
-        start_ns,
-        "transfers",
-        "submitting batch",
-        attempted=len(transfers),
-        concurrency=config.CONCURRENCY,
-    )
     if startup_failed:
         _event(start_ns, "transfers", "skipped because service startup failed")
-        batch = TransferBatchResult(
-            attempted=len(transfers),
-            succeeded=0,
-            failed=len(transfers),
-            duration_ms=0,
-            error_counts=Counter({"startup_failed": len(transfers)}),
-            sample_failures=[],
-            success_tx_ids=set(),
-            success_tx_ids_by_key={},
-            errors_by_key={},
-        )
+        batch = _failed_batch(transfers, "startup_failed")
     else:
-        batch = _fire_transfers(transfers, config.CONCURRENCY)
+        phase_results = []
+        for phase in phases:
+            _event(
+                start_ns,
+                "transfers",
+                "submitting phase",
+                name=phase.name,
+                attempted=len(phase.transfers),
+                concurrency=phase.concurrency,
+            )
+            phase_batch = _fire_transfers(phase.transfers, phase.concurrency)
+            phase_results.append(phase_batch)
+            _event(
+                start_ns,
+                "transfers",
+                "phase complete",
+                name=phase.name,
+                attempted=phase_batch.attempted,
+                succeeded=phase_batch.succeeded,
+                failed=phase_batch.failed,
+                duration_ms=phase_batch.duration_ms,
+            )
+        batch = _combine_batch_results(phase_results)
     _event(
         start_ns,
         "transfers",
@@ -502,9 +619,9 @@ def main() -> int:
     else:
         print("Transfer errors: none", flush=True)
 
-    if config.SETTLE_S > 0:
-        _event(start_ns, "settle", "waiting for services to finish async work", seconds=config.SETTLE_S)
-        time.sleep(config.SETTLE_S)
+    if settle_s > 0:
+        _event(start_ns, "settle", "waiting for services to finish async work", seconds=settle_s)
+        time.sleep(settle_s)
     else:
         _event(start_ns, "settle", "skipped", seconds=0)
 
@@ -602,6 +719,16 @@ def main() -> int:
     _line("FINAL", run_id=run_id, status=result, elapsed_ms=elapsed_ms)
 
     return 1 if result == "FAIL" else 0
+
+
+def main() -> int:
+    rng = random.Random(_seed_value())
+    transfers = make_random_transfers(rng, config.TRANSFERS, key_prefix="key")
+    return run_banking_app(
+        [transfer_phase("cli_smoke", transfers, config.CONCURRENCY)],
+        settle_s=config.SETTLE_S,
+        plan_summary={"scenario": "cli_smoke"},
+    )
 
 
 if __name__ == "__main__":
