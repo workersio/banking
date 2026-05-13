@@ -101,7 +101,7 @@ class AccountHandler(socketserver.BaseRequestHandler):
         tx_id = req["tx_id"]
         conn = _get_conn()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT balance FROM accounts WHERE id = ?", (account,)
             ).fetchone()
@@ -145,7 +145,7 @@ class AccountHandler(socketserver.BaseRequestHandler):
         tx_id = req["tx_id"]
         conn = _get_conn()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
                 "SELECT balance_after FROM transactions WHERE tx_id = ? AND op = 'credit'",
                 (tx_id,),
@@ -180,7 +180,7 @@ class AccountHandler(socketserver.BaseRequestHandler):
         tx_id = req["tx_id"]
         conn = _get_conn()
         try:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
             debit_row = conn.execute(
                 "SELECT account_id, amount FROM transactions WHERE tx_id = ? AND op = 'debit'",
                 (tx_id,),

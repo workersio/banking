@@ -120,9 +120,17 @@ def _run_id() -> str:
     return os.environ.get("BANK_RUN_ID") or f"banking-{int(time.time() * 1000)}-{os.getpid()}"
 
 
-def _rpc_to_gateway(msg: dict[str, Any], timeout: float = 3.0) -> dict[str, Any] | None:
+def _gateway_timeout() -> float:
+    rollback_budget = sum(
+        config.ROLLBACK_BASE_S * (2 ** attempt)
+        for attempt in range(max(0, config.ROLLBACK_MAX_RETRIES - 1))
+    )
+    return config.FRAUD_TIMEOUT + (config.ACCT_TIMEOUT * 2) + rollback_budget + 1.0
+
+
+def _rpc_to_gateway(msg: dict[str, Any], timeout: float | None = None) -> dict[str, Any] | None:
     s = socket.socket()
-    s.settimeout(timeout)
+    s.settimeout(_gateway_timeout() if timeout is None else timeout)
     try:
         s.connect(config.GATEWAY_ADDR)
         send_msg(s, msg)
