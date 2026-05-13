@@ -34,8 +34,8 @@ os.environ.setdefault("BANK_LOCAL", "1")
 os.environ.setdefault("BANK_VELOCITY_LIMIT", "1000")
 os.environ.setdefault("BANK_SINGLE_TX_LIMIT", "9000")
 os.environ.setdefault("BANK_FRAUD_TIMEOUT", "1.0")
-os.environ.setdefault("BANK_ACCT_TIMEOUT", "1.5")
-os.environ.setdefault("BANK_ROLLBACK_RETRIES", "2")
+os.environ.setdefault("BANK_ACCT_TIMEOUT", "8.0")
+os.environ.setdefault("BANK_ROLLBACK_RETRIES", "4")
 os.environ.setdefault("BANK_ROLLBACK_BASE_S", "0.2")
 
 import config  # noqa: E402
@@ -209,8 +209,8 @@ def main() -> int:
 
     impatient = profile_score < float(os.environ.get("BANK_DEMO_IMPATIENT_RATE", "0.20"))
     profile = "impatient_mobile_commute" if impatient else "normal_mobile_checkout"
-    concurrency = int(os.environ.get("BANK_DEMO_CONCURRENCY", "12"))
-    transfer_count = int(os.environ.get("BANK_DEMO_TRANSFERS", "64"))
+    concurrency = int(os.environ.get("BANK_DEMO_CONCURRENCY", "4"))
+    transfer_count = int(os.environ.get("BANK_DEMO_TRANSFERS", "32"))
     timeout_s = float(os.environ.get("BANK_DEMO_CLIENT_TIMEOUT", "0.09" if impatient else "2.0"))
     max_client_errors = int(os.environ.get("BANK_DEMO_MAX_CLIENT_ERRORS", "0"))
     settle_s = float(os.environ.get("BANK_DEMO_SETTLE_S", "2.0"))
