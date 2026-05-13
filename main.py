@@ -38,6 +38,8 @@ class TransferBatchResult:
     error_counts: Counter[str]
     sample_failures: list[dict[str, Any]]
     success_tx_ids: set[str]
+    success_tx_ids_by_key: dict[str, set[str]]
+    errors_by_key: dict[str, set[str]]
 
 
 @dataclass
@@ -110,7 +112,7 @@ def _run_id() -> str:
     return os.environ.get("BANK_RUN_ID") or f"banking-{int(time.time() * 1000)}-{os.getpid()}"
 
 
-def _rpc_to_gateway(msg: dict[str, Any], timeout: float = 30.0) -> dict[str, Any] | None:
+def _rpc_to_gateway(msg: dict[str, Any], timeout: float = 3.0) -> dict[str, Any] | None:
     s = socket.socket()
     s.settimeout(timeout)
     try:
@@ -126,20 +128,25 @@ def _rpc_to_gateway(msg: dict[str, Any], timeout: float = 30.0) -> dict[str, Any
             pass
 
 
-def _generate_transfers(n: int, paired_keys: bool = False) -> list[dict[str, Any]]:
+def _generate_transfers(n: int, duplicate_every: int = 0) -> list[dict[str, Any]]:
     import random
 
     rng = random.Random(_seed_value())
     transfers = []
     for i in range(n):
+        should_duplicate = (
+            duplicate_every > 0
+            and i > 0
+            and i % duplicate_every == 0
+            and transfers
+        )
+        if should_duplicate:
+            transfers.append(dict(transfers[-1]))
+            continue
         src = rng.choice(config.ACCOUNTS)
         dst = rng.choice([a for a in config.ACCOUNTS if a != src])
         amount = rng.randint(100, 2000)
-        if paired_keys:
-            key_idx = i // 2
-            idem_key = f"key-{key_idx:04d}"
-        else:
-            idem_key = f"key-{i:04d}"
+        idem_key = f"key-{i:04d}"
         transfers.append({
             "op": "TRANSFER",
             "src": src,
@@ -183,6 +190,8 @@ def _fire_transfers(transfers: list[dict[str, Any]], concurrency: int) -> Transf
     error_counts: Counter[str] = Counter()
     sample_failures: list[dict[str, Any]] = []
     success_tx_ids: set[str] = set()
+    success_tx_ids_by_key: dict[str, set[str]] = {}
+    errors_by_key: dict[str, set[str]] = {}
     results_lock = threading.Lock()
 
     def fire_one(index: int, transfer: dict[str, Any]) -> None:
@@ -197,12 +206,17 @@ def _fire_transfers(transfers: list[dict[str, Any]], concurrency: int) -> Transf
                 succeeded += 1
                 tx_id = resp.get("tx_id")
                 if tx_id:
-                    success_tx_ids.add(str(tx_id))
+                    tx_id_text = str(tx_id)
+                    success_tx_ids.add(tx_id_text)
+                    idem_key = str(transfer.get("idempotency_key", ""))
+                    success_tx_ids_by_key.setdefault(idem_key, set()).add(tx_id_text)
                 return
 
             failed += 1
             error = "gateway_unreachable" if resp is None else str(resp.get("error", "unknown_error"))
+            idem_key = str(transfer.get("idempotency_key", ""))
             error_counts[error] += 1
+            errors_by_key.setdefault(idem_key, set()).add(error)
             if len(sample_failures) < SAMPLE_LIMIT:
                 sample_failures.append({
                     "index": index,
@@ -243,6 +257,38 @@ def _fire_transfers(transfers: list[dict[str, Any]], concurrency: int) -> Transf
         error_counts=error_counts,
         sample_failures=sample_failures,
         success_tx_ids=success_tx_ids,
+        success_tx_ids_by_key=success_tx_ids_by_key,
+        errors_by_key=errors_by_key,
+    )
+
+
+def _check_idempotency(
+    transfers: list[dict[str, Any]],
+    batch: TransferBatchResult,
+) -> invariants.CheckResult:
+    key_counts = Counter(str(t.get("idempotency_key", "")) for t in transfers)
+    duplicate_keys = sorted(key for key, count in key_counts.items() if count > 1)
+    violations = {}
+    for key in duplicate_keys:
+        tx_ids = sorted(batch.success_tx_ids_by_key.get(key, set()))
+        errors = sorted(batch.errors_by_key.get(key, set()))
+        if len(tx_ids) > 1 or (tx_ids and errors):
+            violations[key] = {"tx_ids": tx_ids, "errors": errors}
+    passed = len(violations) == 0
+    summary = (
+        "duplicate idempotency keys resolved consistently"
+        if passed
+        else f"{len(violations)} idempotency keys had inconsistent outcomes"
+    )
+    return invariants.CheckResult(
+        id="I5",
+        name="idempotency",
+        passed=passed,
+        summary=summary,
+        details={
+            "duplicate_keys": len(duplicate_keys),
+            "violating_keys": violations,
+        },
     )
 
 
@@ -279,8 +325,6 @@ def _print_run_configuration(run_id: str) -> None:
     _print_kv_table("Run configuration", {
         "run_id": run_id,
         "pid": os.getpid(),
-        "bank_seed": _seed_value(),
-        "bank_local": os.environ.get("BANK_LOCAL", "1"),
         "db_path": config.DB_PATH,
         "db_exists_at_start": os.path.exists(config.DB_PATH),
         "accounts": ",".join(config.ACCOUNTS),
@@ -288,7 +332,7 @@ def _print_run_configuration(run_id: str) -> None:
         "initial_total": config.INITIAL_TOTAL,
         "transfers": config.TRANSFERS,
         "concurrency": config.CONCURRENCY,
-        "paired_keys": os.environ.get("BANK_PAIRED_KEYS", "0"),
+        "duplicate_every": config.DUPLICATE_EVERY,
         "settle_s": config.SETTLE_S,
         "fraud_timeout_s": config.FRAUD_TIMEOUT,
         "account_timeout_s": config.ACCT_TIMEOUT,
@@ -410,10 +454,10 @@ def main() -> int:
     time.sleep(config.BIND_WAIT_S)
     _event(start_ns, "services", "startup wait complete", wait_s=config.BIND_WAIT_S)
     _record_startup_health(start_ns, procs, runtime_failures)
+    startup_failed = len(runtime_failures) > 0
 
     _section("Transfer Plan")
-    paired_keys = os.environ.get("BANK_PAIRED_KEYS", "0") == "1"
-    transfers = _generate_transfers(config.TRANSFERS, paired_keys=paired_keys)
+    transfers = _generate_transfers(config.TRANSFERS, duplicate_every=config.DUPLICATE_EVERY)
     _print_kv_table("Generated transfers", _summarize_transfer_plan(transfers))
     _print_transfer_samples(transfers)
 
@@ -425,7 +469,21 @@ def main() -> int:
         attempted=len(transfers),
         concurrency=config.CONCURRENCY,
     )
-    batch = _fire_transfers(transfers, config.CONCURRENCY)
+    if startup_failed:
+        _event(start_ns, "transfers", "skipped because service startup failed")
+        batch = TransferBatchResult(
+            attempted=len(transfers),
+            succeeded=0,
+            failed=len(transfers),
+            duration_ms=0,
+            error_counts=Counter({"startup_failed": len(transfers)}),
+            sample_failures=[],
+            success_tx_ids=set(),
+            success_tx_ids_by_key={},
+            errors_by_key={},
+        )
+    else:
+        batch = _fire_transfers(transfers, config.CONCURRENCY)
     _event(
         start_ns,
         "transfers",
@@ -451,7 +509,7 @@ def main() -> int:
         _event(start_ns, "settle", "skipped", seconds=0)
 
     _section("Gateway Stats")
-    stats_resp = _rpc_to_gateway({"op": "STATS"})
+    stats_resp = None if startup_failed else _rpc_to_gateway({"op": "STATS"})
     stats = stats_resp if isinstance(stats_resp, dict) else {}
     if stats:
         _print_kv_table("Gateway counters", dict(sorted(stats.items())))
@@ -486,7 +544,10 @@ def main() -> int:
     })
 
     _section("Assertions")
-    checks = invariants.run_all(snapshot.balances, snapshot.total, snapshot.tx_log)
+    checks = [
+        *invariants.run_all(snapshot.balances, snapshot.total, snapshot.tx_log),
+        _check_idempotency(transfers, batch),
+    ]
     failed_assertions = _print_assertion_results(checks)
 
     _section("Runtime Checks")

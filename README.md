@@ -23,6 +23,12 @@ Run a larger concurrent batch:
 BANK_TRANSFERS=50 BANK_CONCURRENCY=4 python3 main.py
 ```
 
+Run the Workers IO workload wrapper:
+
+```bash
+python3 .workers/workload.py
+```
+
 The account database is stored at `/tmp/banking.db`. Remove it before a run if
 you want to reset account balances and transaction history:
 
@@ -68,10 +74,11 @@ By default, services listen on:
 4. The gateway credits the destination account through the account service.
 5. If crediting fails after debit succeeds, the gateway attempts a rollback.
 
-## Fault Profiles
+## Workload
 
-Network fault profile JSON files are included under `.workers/fault/net/`.
-They describe loopback traffic loss and delay patterns for the banking services.
+`.workers/workload.py` runs the app the way a client would use it: it starts
+the services, submits concurrent transfer traffic, includes occasional
+duplicate client retries, and lets the app print its own invariant checks.
 
 ## Configuration
 
@@ -79,11 +86,9 @@ All settings are read from environment variables.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `BANK_LOCAL` | `1` | Set to `0` to bind services to distinct loopback IPs on port 9000. |
 | `BANK_RUN_ID` | generated | Optional run identifier printed in logs and summary lines. |
 | `BANK_TRANSFERS` | `10` | Number of generated transfers to execute. |
 | `BANK_CONCURRENCY` | `1` | Number of concurrent transfer requests. |
-| `BANK_SEED` | `42` | Seed used to generate transfers. |
 | `BANK_SETTLE_S` | `15` | Seconds to wait after requests finish. |
 | `BANK_FRAUD_TIMEOUT` | `2` | Fraud service timeout in seconds. |
 | `BANK_ACCT_TIMEOUT` | `5` | Account service timeout in seconds. |
@@ -93,7 +98,7 @@ All settings are read from environment variables.
 | `BANK_ROLLBACK_RETRIES` | `3` | Max rollback attempts. |
 | `BANK_ROLLBACK_BASE_S` | `1` | Initial rollback backoff in seconds. |
 | `BANK_INITIAL_BALANCE` | `10000` | Starting balance per account in cents. |
-| `BANK_PAIRED_KEYS` | `0` | Set to `1` to reuse idempotency keys in pairs. |
+| `BANK_DUPLICATE_EVERY` | `0` | Repeat every Nth generated transfer as a duplicate client retry. |
 
 ## Logging
 
@@ -102,6 +107,7 @@ lines. For large sweeps, the most useful machine-readable lines are:
 
 - `RUN` identifies the execution.
 - `CHECK` reports each invariant with structured details.
+- `INVARIANT_VIOLATED` reports the id of each failed invariant.
 - `RUNTIME_CHECK` reports service health and gateway stats availability.
 - `SUMMARY` reports transfer counts and assertion status.
 - `GATEWAY_STATS` reports service counters.
@@ -117,7 +123,6 @@ Banking Run
 ========================================================================
 RUN id=demo-log-check version=1 started_at=2026-05-04T00:10:13-0700
 Run configuration:
-  bank_seed         : 42
   transfers         : 10
   concurrency       : 1
 
@@ -168,6 +173,6 @@ FINAL run_id=demo-log-check status=PASS elapsed_ms=1114
 |-- protocol.py    # Length-prefixed JSON wire format.
 |-- config.py      # Environment variable parsing.
 |-- API.md         # Wire protocol details.
-`-- .workers/fault/net/
-    `-- *.json     # Network fault profiles.
+`-- .workers/workload.py
+    # Realistic workload entrypoint.
 ```
