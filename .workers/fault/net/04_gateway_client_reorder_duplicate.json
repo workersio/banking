@@ -23,10 +23,6 @@
           "percent": 20,
           "correlation": 0.25,
           "gap": 5
-        },
-        "duplicate": {
-          "percent": 2,
-          "correlation": 0.2
         }
       }
     ]
