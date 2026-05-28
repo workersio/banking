@@ -102,6 +102,13 @@ class AccountHandler(socketserver.BaseRequestHandler):
         conn = _get_conn()
         try:
             conn.execute("BEGIN IMMEDIATE")
+            if conn.execute(
+                "SELECT 1 FROM transactions WHERE tx_id = ? AND op = 'rollback'",
+                (tx_id,),
+            ).fetchone() is not None:
+                conn.rollback()
+                self._reply({"ok": False, "error": "rolled_back"})
+                return
             row = conn.execute(
                 "SELECT balance FROM accounts WHERE id = ?", (account,)
             ).fetchone()
@@ -186,8 +193,17 @@ class AccountHandler(socketserver.BaseRequestHandler):
                 (tx_id,),
             ).fetchone()
             if debit_row is None:
-                conn.rollback()
-                self._reply({"ok": False, "error": "no_debit_found"})
+                # Debit hasn't committed yet — insert a tombstone so a racing
+                # debit will see it and abort instead of committing unfunded.
+                now = time.monotonic_ns()
+                conn.execute(
+                    "INSERT OR IGNORE INTO transactions "
+                    "(tx_id, op, account_id, amount, balance_after, created_at) "
+                    "VALUES (?, 'rollback', '', 0, 0, ?)",
+                    (tx_id, now),
+                )
+                conn.commit()
+                self._reply({"ok": True})
                 return
             existing = conn.execute(
                 "SELECT balance_after FROM transactions WHERE tx_id = ? AND op = 'rollback'",
