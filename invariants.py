@@ -4,6 +4,8 @@ I1: MoneyConservation — total money in the system is constant.
 I2: BalancesNeverNegative — no account balance goes below zero.
 I3: TransfersAreAtomic — every debit has a matching credit or rollback.
 I4: LedgerMatchesBalances — replaying the log reproduces live balances.
+I6: LedgerTransactionShape — each transaction has one valid terminal shape.
+I7: LedgerBalanceAfterConsistent — each ledger row records the actual post-op balance.
 """
 
 from __future__ import annotations
@@ -130,10 +132,113 @@ def check_i4(balances: dict[str, int], tx_log: list[dict]) -> CheckResult:
     )
 
 
+def check_i6(tx_log: list[dict]) -> CheckResult:
+    by_tx: dict[str, dict[str, list[dict]]] = {}
+    for entry in tx_log:
+        tx_id = entry["tx_id"]
+        op = entry["op"]
+        by_tx.setdefault(tx_id, {}).setdefault(op, []).append(entry)
+
+    malformed: dict[str, dict[str, Any]] = {}
+    completed = 0
+    compensated = 0
+    tombstones = 0
+    for tx_id, ops in by_tx.items():
+        op_counts = {op: len(entries) for op, entries in sorted(ops.items())}
+        known_ops = {"debit", "credit", "rollback"}
+        unknown_ops = sorted(set(ops) - known_ops)
+        has_debit = "debit" in ops
+        has_credit = "credit" in ops
+        has_rollback = "rollback" in ops
+
+        if unknown_ops or any(count != 1 for count in op_counts.values()):
+            malformed[tx_id] = {"op_counts": op_counts, "unknown_ops": unknown_ops}
+        elif has_debit and has_credit and not has_rollback:
+            completed += 1
+        elif has_debit and has_rollback and not has_credit:
+            compensated += 1
+        elif has_rollback and not has_debit and not has_credit:
+            rollback = ops["rollback"][0]
+            if rollback["account_id"] == "" and rollback["amount"] == 0:
+                tombstones += 1
+            else:
+                malformed[tx_id] = {"op_counts": op_counts, "reason": "rollback_without_debit"}
+        else:
+            malformed[tx_id] = {"op_counts": op_counts, "reason": "non_terminal_transaction"}
+
+    passed = len(malformed) == 0
+    summary = (
+        "Every transaction had a valid completed, compensated, or rollback-tombstone shape."
+        if passed
+        else f"{len(malformed)} transaction(s) had malformed ledger shape: {', '.join(sorted(malformed)[:5])}."
+    )
+    return CheckResult(
+        id="I6",
+        name="LedgerTransactionShape",
+        passed=passed,
+        summary=summary,
+        details={
+            "transactions_seen": len(by_tx),
+            "completed": completed,
+            "compensated": compensated,
+            "rollback_tombstones": tombstones,
+            "malformed": malformed,
+        },
+    )
+
+
+def check_i7(tx_log: list[dict]) -> CheckResult:
+    replayed: dict[str, int] = {a: config.INITIAL_BALANCE for a in config.ACCOUNTS}
+    mismatches: list[dict[str, Any]] = []
+
+    for entry in tx_log:
+        acct = entry["account_id"]
+        op = entry["op"]
+        amount = entry["amount"]
+        if acct not in replayed:
+            continue
+        if op == "debit":
+            replayed[acct] -= amount
+        elif op in ("credit", "rollback"):
+            replayed[acct] += amount
+        else:
+            continue
+
+        expected = replayed[acct]
+        observed = entry["balance_after"]
+        if expected != observed and len(mismatches) < 10:
+            mismatches.append({
+                "tx_id": entry["tx_id"],
+                "op": op,
+                "account_id": acct,
+                "expected_balance_after": expected,
+                "observed_balance_after": observed,
+            })
+
+    passed = len(mismatches) == 0
+    summary = (
+        "Every ledger row's balance_after matched per-account replay."
+        if passed
+        else f"{len(mismatches)} sampled ledger row(s) had inconsistent balance_after values."
+    )
+    return CheckResult(
+        id="I7",
+        name="LedgerBalanceAfterConsistent",
+        passed=passed,
+        summary=summary,
+        details={
+            "entries_checked": len(tx_log),
+            "sample_mismatches": mismatches,
+        },
+    )
+
+
 def run_all(balances: dict[str, int], total: int, tx_log: list[dict]) -> list[CheckResult]:
     return [
         check_i1(balances, total),
         check_i2(balances),
         check_i3(tx_log),
         check_i4(balances, tx_log),
+        check_i6(tx_log),
+        check_i7(tx_log),
     ]

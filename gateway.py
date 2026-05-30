@@ -1,12 +1,8 @@
-"""Gateway — transfer orchestration with idempotency and rollback.
+"""Gateway — transfer orchestration with validation, idempotency, and rollback.
 
 Coordinates fraud check → debit → credit for each transfer. Opens a new
 TCP connection per downstream RPC (no shared sockets between handler
 threads). Failed credits trigger rollback with exponential backoff.
-
-The idempotency cache has a TOCTOU race: the lock is released between
-the cache check and the cache write, so duplicate concurrent requests
-can both miss the cache.
 """
 
 from __future__ import annotations
@@ -20,6 +16,34 @@ import time
 
 import config
 from protocol import recv_msg, send_msg
+
+
+def _validate_transfer_request(req: dict) -> str | None:
+    """Return an API error code when the transfer request is invalid."""
+    idem_key = req.get("idempotency_key")
+    if not isinstance(idem_key, str) or not idem_key:
+        return "invalid_idempotency_key"
+
+    src = req.get("src")
+    dst = req.get("dst")
+    if src not in config.ACCOUNTS or dst not in config.ACCOUNTS:
+        return "unknown_account"
+    if src == dst:
+        return "same_account_transfer"
+
+    amount = req.get("amount")
+    if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+        return "invalid_amount"
+
+    return None
+
+
+def _transfer_timeout_budget() -> float:
+    rollback_budget = sum(
+        config.ROLLBACK_BASE_S * (2 ** attempt)
+        for attempt in range(max(0, config.ROLLBACK_MAX_RETRIES - 1))
+    )
+    return config.FRAUD_TIMEOUT + (config.ACCT_TIMEOUT * 2) + rollback_budget + 1.0
 
 
 def _rpc(addr: tuple[str, int], src_addr: tuple[str, int],
@@ -53,6 +77,7 @@ class GatewayServer(socketserver.ThreadingTCPServer):
         self.idem_lock = threading.Lock()
         self.stats = {
             "ok": 0, "fail": 0,
+            "invalid": 0,
             "fraud_denied": 0, "fraud_timeout": 0,
             "debit_timeout": 0,
             "rollback_ok": 0, "rollback_failed": 0, "rollback_retries": 0,
@@ -90,19 +115,62 @@ class GatewayHandler(socketserver.BaseRequestHandler):
             self.server.stats[key] += n
 
     def _transfer(self, req: dict) -> None:
+        validation_error = _validate_transfer_request(req)
+        if validation_error is not None:
+            self._inc("invalid")
+            self._inc("fail")
+            self._reply({"ok": False, "error": validation_error})
+            return
+
         idem_key = req.get("idempotency_key", "")
+        src, dst, amount = req["src"], req["dst"], req["amount"]
+        request_fingerprint = (src, dst, amount)
 
         with self.server.idem_lock:
-            cached = self.server.idem_cache.get(idem_key)
-            if cached is not None:
-                self._reply(cached)
-                return
+            idem_record = self.server.idem_cache.get(idem_key)
+            if idem_record is None:
+                idem_record = {
+                    "request": request_fingerprint,
+                    "event": threading.Event(),
+                    "response": None,
+                    "_cached_at": time.monotonic_ns(),
+                }
+                self.server.idem_cache[idem_key] = idem_record
+                owns_request = True
+            else:
+                owns_request = False
+                if idem_record.get("request") != request_fingerprint:
+                    self._inc("invalid")
+                    self._inc("fail")
+                    self._reply({"ok": False, "error": "idempotency_conflict"})
+                    return
+                cached = idem_record.get("response")
+                if cached is not None:
+                    self._reply(cached)
+                    return
+                wait_event = idem_record["event"]
+
+        if not owns_request:
+            if wait_event.wait(timeout=_transfer_timeout_budget()):
+                with self.server.idem_lock:
+                    cached = self.server.idem_cache.get(idem_key, {}).get("response")
+                if cached is not None:
+                    self._reply(cached)
+                    return
+            self._inc("fail")
+            self._reply({"ok": False, "error": "idempotency_in_progress_timeout"})
+            return
+
+        def finish(resp: dict) -> None:
+            with self.server.idem_lock:
+                idem_record["response"] = resp
+                idem_record["_cached_at"] = time.monotonic_ns()
+                idem_record["event"].set()
+            self._reply(resp)
 
         with self.server.tx_lock:
             tx_id = f"tx-{self.server.next_tx:04d}"
             self.server.next_tx += 1
-
-        src, dst, amount = req["src"], req["dst"], req["amount"]
 
         fraud_resp = _rpc(
             config.FRAUD_ADDR, config.GATEWAY_ADDR,
@@ -114,8 +182,7 @@ class GatewayHandler(socketserver.BaseRequestHandler):
         elif not fraud_resp.get("approved"):
             self._inc("fraud_denied")
             self._inc("fail")
-            resp = {"ok": False, "error": fraud_resp.get("reason", "fraud_denied"), "tx_id": tx_id}
-            self._reply(resp)
+            finish({"ok": False, "error": fraud_resp.get("reason", "fraud_denied"), "tx_id": tx_id})
             return
 
         debit_resp = _rpc(
@@ -128,12 +195,12 @@ class GatewayHandler(socketserver.BaseRequestHandler):
             self._inc("debit_timeout")
             self._do_rollback(tx_id)
             self._inc("fail")
-            self._reply({"ok": False, "error": "debit_timeout", "tx_id": tx_id})
+            finish({"ok": False, "error": "debit_timeout", "tx_id": tx_id})
             return
 
         if not debit_resp.get("ok"):
             self._inc("fail")
-            self._reply({"ok": False, "error": debit_resp.get("error", "debit_failed"), "tx_id": tx_id})
+            finish({"ok": False, "error": debit_resp.get("error", "debit_failed"), "tx_id": tx_id})
             return
 
         credit_resp = _rpc(
@@ -145,20 +212,15 @@ class GatewayHandler(socketserver.BaseRequestHandler):
         if credit_resp is None or not credit_resp.get("ok"):
             self._do_rollback(tx_id)
             self._inc("fail")
-            self._reply({"ok": False, "error": "credit_failed", "tx_id": tx_id})
+            finish({"ok": False, "error": "credit_failed", "tx_id": tx_id})
             return
 
-        resp = {
+        self._inc("ok")
+        finish({
             "ok": True, "tx_id": tx_id,
             "src_balance": debit_resp["balance"],
             "dst_balance": credit_resp["balance"],
-        }
-        with self.server.idem_lock:
-            cached = dict(resp)
-            cached["_cached_at"] = time.monotonic_ns()
-            self.server.idem_cache[idem_key] = cached
-        self._inc("ok")
-        self._reply(resp)
+        })
 
     def _do_rollback(self, tx_id: str) -> None:
         delay = config.ROLLBACK_BASE_S
@@ -206,8 +268,10 @@ def _cache_sweeper(srv: GatewayServer, stop: mp.Event) -> None:
         now = time.monotonic_ns()
         ttl_ns = 60 * 1_000_000_000
         with srv.idem_lock:
-            expired = [k for k, v in srv.idem_cache.items()
-                       if now - v.get("_cached_at", 0) > ttl_ns]
+            expired = [
+                k for k, v in srv.idem_cache.items()
+                if v.get("response") is not None and now - v.get("_cached_at", 0) > ttl_ns
+            ]
             for k in expired:
                 del srv.idem_cache[k]
 

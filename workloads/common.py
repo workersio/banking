@@ -60,6 +60,19 @@ def shuffled_duplicate_pairs(
     return paired
 
 
+def validation_probe_attempts(source_rng: random.Random, key_prefix: str) -> list[dict[str, Any]]:
+    """Client mistakes that should be rejected before any ledger mutation."""
+    src = source_rng.choice(config.ACCOUNTS)
+    dst = banking.choose_destination(source_rng, src)
+    return [
+        banking.make_transfer(src, dst, 0, f"{key_prefix}-zero-amount"),
+        banking.make_transfer(src, dst, -25, f"{key_prefix}-negative-amount"),
+        banking.make_transfer(src, src, 100, f"{key_prefix}-same-account"),
+        banking.make_transfer(src, "Z", 100, f"{key_prefix}-unknown-destination"),
+        banking.make_transfer(src, dst, 100, ""),
+    ]
+
+
 def run_workload(
     name: str,
     phases: list[banking.TransferPhase],

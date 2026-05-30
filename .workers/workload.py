@@ -106,6 +106,18 @@ def fraud_probe_attempts(rng: random.Random, count: int) -> list[dict]:
     return transfers
 
 
+def validation_probe_attempts(rng: random.Random) -> list[dict]:
+    source = rng.choice(config.ACCOUNTS)
+    destination = banking.choose_destination(rng, source)
+    return [
+        banking.make_transfer(source, destination, 0, "validation-zero-amount"),
+        banking.make_transfer(source, destination, -25, "validation-negative-amount"),
+        banking.make_transfer(source, source, 100, "validation-same-account"),
+        banking.make_transfer(source, "Z", 100, "validation-unknown-destination"),
+        banking.make_transfer(source, destination, 100, ""),
+    ]
+
+
 def build_realistic_workload() -> list[banking.TransferPhase]:
     rng = random.Random(os.environ.get("BANK_SEED", "42"))
     total = int(os.environ.get("BANK_TRANSFERS", "500"))
@@ -121,12 +133,14 @@ def build_realistic_workload() -> list[banking.TransferPhase]:
     routine_retries = _retries(routine, duplicate_every)
     burst = payroll_and_billpay_burst(rng, counts["burst"])
     fraud = fraud_probe_attempts(rng, counts["fraud"])
+    validation = validation_probe_attempts(rng)
 
     return [
         banking.transfer_phase("routine_sequential_activity", routine, concurrency=1),
         banking.transfer_phase("routine_client_retries", routine_retries, concurrency=1),
         banking.transfer_phase("payroll_and_billpay_burst", burst, concurrency=burst_concurrency),
         banking.transfer_phase("fraud_probe_attempts", fraud, concurrency=burst_concurrency),
+        banking.transfer_phase("client_validation_errors", validation, concurrency=2),
     ]
 
 

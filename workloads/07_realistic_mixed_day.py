@@ -6,7 +6,7 @@ import sys
 
 os.environ.setdefault("BANK_VELOCITY_LIMIT", "1000")
 
-from common import banking, config, every_nth_retry, rng, run_workload, split_counts
+from common import banking, config, every_nth_retry, rng, run_workload, split_counts, validation_probe_attempts
 
 
 def build() -> list[banking.TransferPhase]:
@@ -37,12 +37,14 @@ def build() -> list[banking.TransferPhase]:
         )
         for index in range(counts["fraud"])
     ]
+    validation = validation_probe_attempts(source_rng, "mixed-validation")
 
     return [
         banking.transfer_phase("routine_sequential", routine, concurrency=1),
         banking.transfer_phase("routine_retries_after_success", every_nth_retry(routine, 30), concurrency=1),
         banking.transfer_phase("merchant_parallel_burst", merchant, concurrency=4),
         banking.transfer_phase("fraud_amount_probes", fraud, concurrency=4),
+        banking.transfer_phase("client_validation_errors", validation, concurrency=2),
     ]
 
 

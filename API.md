@@ -21,8 +21,8 @@ The gateway is the only service the driver talks to.
 
 ### TRANSFER
 
-Orchestrates a money transfer: fraud check → debit source → credit
-destination. On credit failure, rolls back the debit.
+Validates and orchestrates a money transfer: fraud check → debit source →
+credit destination. On credit failure, rolls back the debit.
 
 **Request:**
 ```json
@@ -56,7 +56,24 @@ destination. On credit failure, rolls back the debit.
 
 Possible `error` values: `fraud_denied`, `velocity_exceeded`,
 `amount_exceeded`, `debit_timeout`, `insufficient_funds`,
-`credit_failed`, `no_account`.
+`credit_failed`, `no_account`, `invalid_amount`, `invalid_idempotency_key`,
+`same_account_transfer`, `unknown_account`, `idempotency_conflict`,
+`idempotency_in_progress_timeout`.
+
+Idempotency behavior:
+- The same `idempotency_key` with the same `src`, `dst`, and `amount` returns
+  the first completed response, including a failure response.
+- A duplicate request that arrives while the first request is still running
+  waits for that first response.
+- Reusing an `idempotency_key` with a different `src`, `dst`, or `amount`
+  returns `idempotency_conflict`.
+- Cached idempotency results are retained in memory for approximately 60 seconds.
+
+Validation behavior:
+- `src` and `dst` must be known accounts.
+- `src` and `dst` must differ.
+- `amount` must be a positive integer.
+- `idempotency_key` must be a non-empty string.
 
 ### BALANCE
 
@@ -83,6 +100,7 @@ Returns gateway-internal counters.
 {
   "ok": 30,
   "fail": 20,
+  "invalid": 1,
   "fraud_denied": 2,
   "fraud_timeout": 0,
   "debit_timeout": 1,
@@ -126,6 +144,8 @@ Deducts `amount` from `account` and logs the transaction.
 ```
 
 Errors: `insufficient_funds`, `no_account`, `duplicate_tx`, `internal`.
+Direct service callers can also receive `invalid_request` for malformed account
+or amount fields.
 
 ### CREDIT
 
@@ -147,6 +167,9 @@ returns the previously recorded balance.
 { "ok": true, "balance": 10500 }
 ```
 
+Direct service callers can receive `invalid_request` for malformed account or
+amount fields.
+
 ### ROLLBACK
 
 Reverses a prior debit. Looks up the original debit by `tx_id`, then
@@ -165,9 +188,12 @@ credits the amount back. Idempotent — replaying returns the same result.
 { "ok": true, "balance": 10000 }
 ```
 
+When no debit exists yet, rollback records a tombstone so a racing debit with
+the same transaction id cannot commit later.
+
 **Failure:**
 ```json
-{ "ok": false, "error": "no_debit_found" }
+{ "ok": false, "error": "internal" }
 ```
 
 ### BALANCE
@@ -259,7 +285,7 @@ Reasons: `velocity_exceeded`, `amount_exceeded`.
 | Fraud denied | Returns error, no money moved |
 | Debit timeout | Attempts rollback, returns error |
 | Credit timeout/failure | Rolls back the debit (3 retries, exponential backoff) |
-| Rollback exhausted | Logs `ROLLBACK_FAILED:tx_id`, money in limbo |
+| Rollback exhausted | Logs `SERVICE name=gateway event=rollback_failed tx_id=...`, money in limbo |
 
 ---
 

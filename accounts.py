@@ -1,9 +1,8 @@
 """Account service — SQLite-backed balances and transaction log.
 
 Exposes DEBIT, CREDIT, ROLLBACK, BALANCE, and TX_LOG operations over TCP.
-Uses WAL mode with deferred transactions. The deferred BEGIN creates a
-check-then-act window: two concurrent DEBITs can both read the same
-balance before either commits.
+Uses WAL mode and explicit write transactions so balance changes and
+ledger entries commit atomically.
 """
 
 from __future__ import annotations
@@ -19,6 +18,9 @@ import time
 import config
 from protocol import recv_msg, send_msg
 
+
+def _valid_amount(amount: object) -> bool:
+    return isinstance(amount, int) and not isinstance(amount, bool) and amount > 0
 
 
 def _init_db() -> None:
@@ -99,6 +101,10 @@ class AccountHandler(socketserver.BaseRequestHandler):
         account = req["account"]
         amount = req["amount"]
         tx_id = req["tx_id"]
+        if account not in config.ACCOUNTS or not _valid_amount(amount):
+            self._reply({"ok": False, "error": "invalid_request"})
+            return
+
         conn = _get_conn()
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -150,6 +156,10 @@ class AccountHandler(socketserver.BaseRequestHandler):
         account = req["account"]
         amount = req["amount"]
         tx_id = req["tx_id"]
+        if account not in config.ACCOUNTS or not _valid_amount(amount):
+            self._reply({"ok": False, "error": "invalid_request"})
+            return
+
         conn = _get_conn()
         try:
             conn.execute("BEGIN IMMEDIATE")

@@ -1,6 +1,7 @@
 {
   "version": 1,
   "name": "Accounts settlement tail",
+  "seed": "0000000000001009",
   "lo": {
     "default": {
       "delay": {
@@ -15,10 +16,14 @@
           "bidirectional": true
         },
         "delay": {
-          "time_ms": 120,
-          "jitter_ms": 35,
-          "correlation": 0.35,
-          "distribution": "normal"
+          "time_ms": 280,
+          "jitter_ms": 180,
+          "correlation": 0.45,
+          "distribution": "paretonormal"
+        },
+        "loss": {
+          "percent": 0.8,
+          "correlation": 0.25
         }
       }
     ]
