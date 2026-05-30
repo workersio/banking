@@ -395,6 +395,22 @@ def _check_idempotency(
     )
 
 
+def _safe_check_idempotency(
+    transfers: list[dict[str, Any]],
+    batch: TransferBatchResult,
+) -> invariants.CheckResult:
+    try:
+        return _check_idempotency(transfers, batch)
+    except Exception as exc:
+        return invariants.CheckResult(
+            id="I5",
+            name="IdempotencyKeysAreConsistent",
+            passed=False,
+            summary=f"Idempotency invariant check crashed instead of completing: {type(exc).__name__}: {exc}.",
+            details={"exception": repr(exc)},
+        )
+
+
 def _read_database() -> DatabaseSnapshot:
     conn: sqlite3.Connection | None = None
     try:
@@ -671,7 +687,7 @@ def run_banking_app(
     _section("Assertions")
     checks = [
         *invariants.run_all(snapshot.balances, snapshot.total, snapshot.tx_log),
-        _check_idempotency(transfers, batch),
+        _safe_check_idempotency(transfers, batch),
     ]
     failed_assertions = _print_assertion_results(checks)
 
