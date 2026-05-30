@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "Accounts RPC slow tail",
+  "name": "Accounts RPC moderate tail with rare loss",
   "seed": "0000000000001002",
   "lo": {
     "default": {
@@ -16,13 +16,13 @@
           "bidirectional": true
         },
         "delay": {
-          "time_ms": 120,
-          "jitter_ms": 60,
-          "correlation": 0.35,
+          "time_ms": 65,
+          "jitter_ms": 35,
+          "correlation": 0.25,
           "distribution": "paretonormal"
         },
         "loss": {
-          "percent": 0.5,
+          "percent": 0.2,
           "correlation": 0.1
         }
       }

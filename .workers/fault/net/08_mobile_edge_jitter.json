@@ -1,6 +1,7 @@
 {
   "version": 1,
   "name": "Mobile edge jitter",
+  "seed": "0000000000001008",
   "lo": {
     "default": {
       "delay": {

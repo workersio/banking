@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import sys
+
+os.environ.setdefault("BANK_VELOCITY_LIMIT", "1000")
 
 from common import banking, rng, run_workload
 

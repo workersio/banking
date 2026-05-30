@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "Gateway client reorder and duplicate",
+  "name": "Gateway client reordering",
   "seed": "0000000000001004",
   "lo": {
     "default": {
