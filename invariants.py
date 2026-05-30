@@ -11,7 +11,7 @@ I7: LedgerBalanceAfterConsistent — each ledger row records the actual post-op 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import config
 
@@ -29,6 +29,31 @@ class CheckResult:
     @property
     def status(self) -> str:
         return "PASS" if self.passed else "FAIL"
+
+
+def _is_rollback_tombstone(entry: dict) -> bool:
+    return (
+        entry.get("op") == "rollback"
+        and entry.get("account_id") == ""
+        and entry.get("amount") == 0
+    )
+
+
+def _check_failed(check_id: str, name: str, exc: Exception) -> CheckResult:
+    return CheckResult(
+        id=check_id,
+        name=name,
+        passed=False,
+        summary=f"Invariant check crashed instead of completing: {type(exc).__name__}: {exc}.",
+        details={"exception": repr(exc)},
+    )
+
+
+def _run_check(check_id: str, name: str, fn: Callable[[], CheckResult]) -> CheckResult:
+    try:
+        return fn()
+    except Exception as exc:
+        return _check_failed(check_id, name, exc)
 
 
 def check_i1(balances: dict[str, int], total: int) -> CheckResult:
@@ -98,28 +123,59 @@ def check_i3(tx_log: list[dict]) -> CheckResult:
 
 def check_i4(balances: dict[str, int], tx_log: list[dict]) -> CheckResult:
     replayed: dict[str, int] = {a: config.INITIAL_BALANCE for a in config.ACCOUNTS}
+    malformed_rows: list[dict[str, Any]] = []
+    tombstones = 0
     for entry in tx_log:
         acct = entry["account_id"]
         amount = entry["amount"]
         op = entry["op"]
+        if _is_rollback_tombstone(entry):
+            tombstones += 1
+            continue
+        if acct not in replayed:
+            if len(malformed_rows) < 10:
+                malformed_rows.append({
+                    "tx_id": entry.get("tx_id"),
+                    "op": op,
+                    "account_id": acct,
+                    "amount": amount,
+                    "reason": "unknown_account",
+                })
+            continue
         if op == "debit":
             replayed[acct] -= amount
         elif op == "credit":
             replayed[acct] += amount
         elif op == "rollback":
             replayed[acct] += amount
+        else:
+            if len(malformed_rows) < 10:
+                malformed_rows.append({
+                    "tx_id": entry.get("tx_id"),
+                    "op": op,
+                    "account_id": acct,
+                    "amount": amount,
+                    "reason": "unknown_operation",
+                })
 
     mismatches = {}
     for acct in config.ACCOUNTS:
         if replayed.get(acct) != balances.get(acct):
             mismatches[acct] = {"replayed": replayed.get(acct), "live": balances.get(acct)}
 
-    passed = len(mismatches) == 0
-    summary = (
-        "Ledger replay matched every live account balance."
-        if passed
-        else f"{len(mismatches)} account balance(s) differed from ledger replay: {', '.join(sorted(mismatches)[:5])}."
-    )
+    passed = len(mismatches) == 0 and len(malformed_rows) == 0
+    if passed:
+        summary = "Ledger replay matched every live account balance."
+    elif malformed_rows:
+        summary = (
+            f"Ledger replay found {len(mismatches)} balance mismatch(es) "
+            f"and {len(malformed_rows)} malformed row sample(s)."
+        )
+    else:
+        summary = (
+            f"{len(mismatches)} account balance(s) differed from ledger replay: "
+            f"{', '.join(sorted(mismatches)[:5])}."
+        )
     return CheckResult(
         id="I4",
         name="LedgerMatchesBalances",
@@ -127,7 +183,9 @@ def check_i4(balances: dict[str, int], tx_log: list[dict]) -> CheckResult:
         summary=summary,
         details={
             "entries_replayed": len(tx_log),
+            "rollback_tombstones_skipped": tombstones,
             "mismatches": mismatches,
+            "malformed_row_samples": malformed_rows,
         },
     )
 
@@ -195,7 +253,16 @@ def check_i7(tx_log: list[dict]) -> CheckResult:
         acct = entry["account_id"]
         op = entry["op"]
         amount = entry["amount"]
+        if _is_rollback_tombstone(entry):
+            continue
         if acct not in replayed:
+            if len(mismatches) < 10:
+                mismatches.append({
+                    "tx_id": entry.get("tx_id"),
+                    "op": op,
+                    "account_id": acct,
+                    "reason": "unknown_account",
+                })
             continue
         if op == "debit":
             replayed[acct] -= amount
@@ -235,10 +302,10 @@ def check_i7(tx_log: list[dict]) -> CheckResult:
 
 def run_all(balances: dict[str, int], total: int, tx_log: list[dict]) -> list[CheckResult]:
     return [
-        check_i1(balances, total),
-        check_i2(balances),
-        check_i3(tx_log),
-        check_i4(balances, tx_log),
-        check_i6(tx_log),
-        check_i7(tx_log),
+        _run_check("I1", "MoneyConservation", lambda: check_i1(balances, total)),
+        _run_check("I2", "BalancesNeverNegative", lambda: check_i2(balances)),
+        _run_check("I3", "TransfersAreAtomic", lambda: check_i3(tx_log)),
+        _run_check("I4", "LedgerMatchesBalances", lambda: check_i4(balances, tx_log)),
+        _run_check("I6", "LedgerTransactionShape", lambda: check_i6(tx_log)),
+        _run_check("I7", "LedgerBalanceAfterConsistent", lambda: check_i7(tx_log)),
     ]
