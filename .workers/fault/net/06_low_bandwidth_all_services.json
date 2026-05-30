@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "name": "Low bandwidth all services",
   "seed": "0000000000001006",
   "lo": {
     "default": {

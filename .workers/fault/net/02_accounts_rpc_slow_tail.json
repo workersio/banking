@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "name": "Accounts RPC slow tail",
   "seed": "0000000000001002",
   "lo": {
     "default": {

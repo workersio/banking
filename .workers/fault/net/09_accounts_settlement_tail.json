@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "name": "Accounts settlement tail",
   "lo": {
     "default": {
       "delay": {

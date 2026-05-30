@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "name": "Mild loopback loss and latency",
   "seed": "0000000000001001",
   "lo": {
     "default": {

@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "name": "Fraud RPC bursty loss",
   "seed": "0000000000001003",
   "lo": {
     "default": {

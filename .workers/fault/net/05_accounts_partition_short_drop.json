@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "name": "Accounts partition short drop",
   "seed": "0000000000001005",
   "lo": {
     "default": {
