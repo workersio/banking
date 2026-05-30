@@ -177,13 +177,13 @@ def _deadline_check(
     client_errors = int(batch["failed"])
     passed = deadline_errors <= max_client_errors
     summary = (
-        f"deadline errors {deadline_errors} within budget {max_client_errors}"
+        f"Mobile client deadline failures stayed within budget ({deadline_errors}/{max_client_errors})."
         if passed
-        else f"deadline errors {deadline_errors} exceeded budget {max_client_errors}"
+        else f"Mobile client deadline failures exceeded budget ({deadline_errors}/{max_client_errors})."
     )
     return invariants.CheckResult(
         id="D1",
-        name="mobile_deadline_budget",
+        name="MobileDeadlineBudget",
         passed=passed,
         summary=summary,
         details={
@@ -316,9 +316,9 @@ def main() -> int:
         checks.append(
             invariants.CheckResult(
                 id="R1",
-                name="runtime_health",
+                name="ServicesStayHealthy",
                 passed=False,
-                summary=f"{len(runtime_failures)} service runtime failures observed",
+                summary=f"Service runtime health failed: {len(runtime_failures)} failure(s) observed.",
                 details={"failures": runtime_failures},
             )
         )

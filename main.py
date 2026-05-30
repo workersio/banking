@@ -379,13 +379,13 @@ def _check_idempotency(
             violations[key] = {"tx_ids": tx_ids, "errors": errors}
     passed = len(violations) == 0
     summary = (
-        "duplicate idempotency keys resolved consistently"
+        "Duplicate idempotency keys resolved to one consistent outcome."
         if passed
-        else f"{len(violations)} idempotency keys had inconsistent outcomes"
+        else f"{len(violations)} idempotency key(s) produced inconsistent outcomes: {', '.join(sorted(violations)[:5])}."
     )
     return invariants.CheckResult(
         id="I5",
-        name="idempotency",
+        name="IdempotencyKeysAreConsistent",
         passed=passed,
         summary=summary,
         details={

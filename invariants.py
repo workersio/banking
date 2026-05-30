@@ -1,9 +1,9 @@
 """Post-run invariant checks verified by reading SQLite directly.
 
-I1: Conservation — total money in the system is constant.
-I2: Non-negative — no account balance goes below zero.
-I3: Atomicity — every debit has a matching credit or rollback.
-I4: Tx log integrity — replaying the log reproduces live balances.
+I1: MoneyConservation — total money in the system is constant.
+I2: BalancesNeverNegative — no account balance goes below zero.
+I3: TransfersAreAtomic — every debit has a matching credit or rollback.
+I4: LedgerMatchesBalances — replaying the log reproduces live balances.
 """
 
 from __future__ import annotations
@@ -34,13 +34,13 @@ def check_i1(balances: dict[str, int], total: int) -> CheckResult:
     delta = total - expected
     passed = delta == 0
     summary = (
-        f"total={total} expected={expected}"
+        f"System total stayed at {total} cents."
         if passed
-        else f"money total changed by {delta} cents"
+        else f"System total changed by {delta} cents: expected {expected}, observed {total}."
     )
     return CheckResult(
         id="I1",
-        name="conservation",
+        name="MoneyConservation",
         passed=passed,
         summary=summary,
         details={"actual_total": total, "expected_total": expected, "delta": delta},
@@ -51,13 +51,13 @@ def check_i2(balances: dict[str, int]) -> CheckResult:
     negatives = {a: b for a, b in balances.items() if b < 0}
     passed = len(negatives) == 0
     summary = (
-        "all account balances are non-negative"
+        "No account ended with a negative balance."
         if passed
-        else f"{len(negatives)} account balances are negative"
+        else f"{len(negatives)} account balance(s) ended negative: {', '.join(sorted(negatives)[:5])}."
     )
     return CheckResult(
         id="I2",
-        name="non_negative",
+        name="BalancesNeverNegative",
         passed=passed,
         summary=summary,
         details={"negative_accounts": negatives},
@@ -77,13 +77,13 @@ def check_i3(tx_log: list[dict]) -> CheckResult:
 
     passed = len(orphaned) == 0
     summary = (
-        "every debit has a matching credit or rollback"
+        "Every debit was matched by a credit or rollback."
         if passed
-        else f"{len(orphaned)} debits have no matching credit or rollback"
+        else f"{len(orphaned)} debit(s) were missing a credit or rollback; sample tx ids: {', '.join(orphaned[:5])}."
     )
     return CheckResult(
         id="I3",
-        name="atomicity",
+        name="TransfersAreAtomic",
         passed=passed,
         summary=summary,
         details={
@@ -114,13 +114,13 @@ def check_i4(balances: dict[str, int], tx_log: list[dict]) -> CheckResult:
 
     passed = len(mismatches) == 0
     summary = (
-        "transaction log replays to live balances"
+        "Ledger replay matched every live account balance."
         if passed
-        else f"{len(mismatches)} account balances differ from replayed log"
+        else f"{len(mismatches)} account balance(s) differed from ledger replay: {', '.join(sorted(mismatches)[:5])}."
     )
     return CheckResult(
         id="I4",
-        name="tx_log_integrity",
+        name="LedgerMatchesBalances",
         passed=passed,
         summary=summary,
         details={

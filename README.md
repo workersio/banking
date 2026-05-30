@@ -138,10 +138,10 @@ Transfer errors: none
 ========================================================================
 Assertions
 ========================================================================
-[OK  ] I1 conservation: total=50000 expected=50000
-CHECK id=I1 name=conservation status=PASS summary="total=50000 expected=50000" details={"actual_total":50000,"delta":0,"expected_total":50000}
-[OK  ] I2 non_negative: all account balances are non-negative
-CHECK id=I2 name=non_negative status=PASS summary="all account balances are non-negative" details={"negative_accounts":{}}
+[OK  ] I1 MoneyConservation: System total stayed at 50000 cents.
+CHECK id=I1 name=MoneyConservation status=PASS summary="System total stayed at 50000 cents." details={"actual_total":50000,"delta":0,"expected_total":50000}
+[OK  ] I2 BalancesNeverNegative: No account ended with a negative balance.
+CHECK id=I2 name=BalancesNeverNegative status=PASS summary="No account ended with a negative balance." details={"negative_accounts":{}}
 
 ========================================================================
 Runtime Checks
