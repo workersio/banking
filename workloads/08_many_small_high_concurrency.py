@@ -11,14 +11,14 @@ from common import banking, rng, run_workload
 
 def build() -> list[banking.TransferPhase]:
     source_rng = rng("workload-08")
-    transfers = banking.make_random_transfers(
+    operations = banking.make_random_operations(
         source_rng,
         500,
         key_prefix="small-high-c",
         amount_min=1,
         amount_max=80,
     )
-    return [banking.transfer_phase("many_small_transfers", transfers, concurrency=16)]
+    return [banking.operation_phase("many_small_ledger_movements", operations, concurrency=16)]
 
 
 if __name__ == "__main__":

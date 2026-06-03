@@ -1,8 +1,8 @@
-"""Gateway — transfer orchestration with validation, idempotency, and rollback.
+"""Gateway — payment-operation orchestration with validation and idempotency.
 
-Coordinates fraud check → debit → credit for each transfer. Opens a new
+Coordinates risk check -> debit -> credit for each ledger movement. Opens a new
 TCP connection per downstream RPC (no shared sockets between handler
-threads). Failed credits trigger rollback with exponential backoff.
+threads). Failed credits trigger compensation with exponential backoff.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from protocol import recv_msg, send_msg
 
 
 def _validate_transfer_request(req: dict) -> str | None:
-    """Return an API error code when the transfer request is invalid."""
+    """Return an API error code when the operation request is invalid."""
     idem_key = req.get("idempotency_key")
     if not isinstance(idem_key, str) or not idem_key:
         return "invalid_idempotency_key"
@@ -27,9 +27,9 @@ def _validate_transfer_request(req: dict) -> str | None:
     src = req.get("src")
     dst = req.get("dst")
     if src not in config.ACCOUNTS or dst not in config.ACCOUNTS:
-        return "unknown_account"
+        return "unknown_balance"
     if src == dst:
-        return "same_account_transfer"
+        return "same_balance_transfer"
 
     amount = req.get("amount")
     if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
@@ -78,9 +78,9 @@ class GatewayServer(socketserver.ThreadingTCPServer):
         self.stats = {
             "ok": 0, "fail": 0,
             "invalid": 0,
-            "fraud_denied": 0, "fraud_timeout": 0,
+            "risk_denied": 0, "risk_timeout": 0,
             "debit_timeout": 0,
-            "rollback_ok": 0, "rollback_failed": 0, "rollback_retries": 0,
+            "compensation_ok": 0, "compensation_failed": 0, "compensation_retries": 0,
         }
         self.stats_lock = threading.Lock()
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -178,11 +178,11 @@ class GatewayHandler(socketserver.BaseRequestHandler):
             config.FRAUD_TIMEOUT,
         )
         if fraud_resp is None:
-            self._inc("fraud_timeout")
+            self._inc("risk_timeout")
         elif not fraud_resp.get("approved"):
-            self._inc("fraud_denied")
+            self._inc("risk_denied")
             self._inc("fail")
-            finish({"ok": False, "error": fraud_resp.get("reason", "fraud_denied"), "tx_id": tx_id})
+            finish({"ok": False, "error": fraud_resp.get("reason", "risk_denied"), "tx_id": tx_id})
             return
 
         debit_resp = _rpc(
@@ -226,7 +226,7 @@ class GatewayHandler(socketserver.BaseRequestHandler):
         delay = config.ROLLBACK_BASE_S
         for attempt in range(config.ROLLBACK_MAX_RETRIES):
             if attempt > 0:
-                self._inc("rollback_retries")
+                self._inc("compensation_retries")
                 time.sleep(delay)
                 delay *= 2
             resp = _rpc(
@@ -235,10 +235,10 @@ class GatewayHandler(socketserver.BaseRequestHandler):
                 config.ACCT_TIMEOUT,
             )
             if resp is not None and resp.get("ok"):
-                self._inc("rollback_ok")
+                self._inc("compensation_ok")
                 return
-        self._inc("rollback_failed")
-        print(f"SERVICE name=gateway event=rollback_failed tx_id={tx_id}", flush=True)
+        self._inc("compensation_failed")
+        print(f"SERVICE name=gateway event=compensation_failed tx_id={tx_id}", flush=True)
 
     def _balance(self) -> None:
         resp = _rpc(

@@ -38,24 +38,24 @@ def split_counts(total: int, ratios: dict[str, float]) -> dict[str, int]:
     return counts
 
 
-def every_nth_retry(transfers: list[dict[str, Any]], every: int) -> list[dict[str, Any]]:
+def every_nth_retry(operations: list[dict[str, Any]], every: int) -> list[dict[str, Any]]:
     if every <= 0:
         return []
     return [
-        banking.duplicate_transfer(transfer)
-        for index, transfer in enumerate(transfers)
+        banking.duplicate_operation(operation)
+        for index, operation in enumerate(operations)
         if index > 0 and index % every == 0
     ]
 
 
 def shuffled_duplicate_pairs(
     source_rng: random.Random,
-    transfers: list[dict[str, Any]],
+    operations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     paired = []
-    for transfer in transfers:
-        paired.append(transfer)
-        paired.append(banking.duplicate_transfer(transfer))
+    for operation in operations:
+        paired.append(operation)
+        paired.append(banking.duplicate_operation(operation))
     source_rng.shuffle(paired)
     return paired
 
@@ -65,11 +65,11 @@ def validation_probe_attempts(source_rng: random.Random, key_prefix: str) -> lis
     src = source_rng.choice(config.ACCOUNTS)
     dst = banking.choose_destination(source_rng, src)
     return [
-        banking.make_transfer(src, dst, 0, f"{key_prefix}-zero-amount"),
-        banking.make_transfer(src, dst, -25, f"{key_prefix}-negative-amount"),
-        banking.make_transfer(src, src, 100, f"{key_prefix}-same-account"),
-        banking.make_transfer(src, "Z", 100, f"{key_prefix}-unknown-destination"),
-        banking.make_transfer(src, dst, 100, ""),
+        banking.make_operation(src, dst, 0, f"{key_prefix}-zero-amount"),
+        banking.make_operation(src, dst, -25, f"{key_prefix}-negative-amount"),
+        banking.make_operation(src, src, 100, f"{key_prefix}-same-account"),
+        banking.make_operation(src, "Z", 100, f"{key_prefix}-unknown-destination"),
+        banking.make_operation(src, dst, 100, ""),
     ]
 
 
@@ -83,7 +83,7 @@ def run_workload(
     reset_database()
     os.environ.setdefault("BANK_RUN_ID", name)
     os.environ.setdefault("BANK_SETTLE_S", "0")
-    attempted = sum(len(phase.transfers) for phase in phases)
+    attempted = sum(len(phase.operations) for phase in phases)
     result = banking.run_banking_app(
         phases,
         settle_s=int(os.environ["BANK_SETTLE_S"]) if settle_s is None else settle_s,

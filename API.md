@@ -1,41 +1,43 @@
-# Banking API Specification
+# Payment Operations API Specification
 
-All inter-service communication uses **length-prefixed JSON over TCP**.
-Each message is framed as:
+All inter-service communication uses length-prefixed JSON over TCP:
 
-```
+```text
 [4 bytes: big-endian payload length][UTF-8 JSON payload]
 ```
 
 Max payload: 1 MiB. Every request gets exactly one response on the same
-connection. Connections are not reused — the gateway opens a fresh TCP
-socket for each RPC.
-
----
+connection. Connections are not reused; the gateway opens a fresh TCP socket
+for each downstream RPC.
 
 ## Gateway
 
 Default local address: `127.0.0.1:9100`.
 
-The gateway is the only service the driver talks to.
+The gateway is the only service the scenario driver talks to.
 
 ### TRANSFER
 
-Validates and orchestrates a money transfer: fraud check → debit source →
-credit destination. On credit failure, rolls back the debit.
+Validates and orchestrates one provider ledger movement:
+
+`risk check -> debit source balance -> credit destination balance`
+
+On credit failure, the gateway compensates the debit.
 
 **Request:**
+
 ```json
 {
   "op": "TRANSFER",
-  "src": "A",
-  "dst": "B",
+  "src": "collection_pending",
+  "dst": "payout_available",
   "amount": 500,
-  "idempotency_key": "key-0001"
+  "idempotency_key": "payout-ref-0001"
 }
 ```
 
 **Success response:**
+
 ```json
 {
   "ok": true,
@@ -46,6 +48,7 @@ credit destination. On credit failure, rolls back the debit.
 ```
 
 **Failure response:**
+
 ```json
 {
   "ok": false,
@@ -54,65 +57,66 @@ credit destination. On credit failure, rolls back the debit.
 }
 ```
 
-Possible `error` values: `fraud_denied`, `velocity_exceeded`,
-`amount_exceeded`, `debit_timeout`, `insufficient_funds`,
-`credit_failed`, `no_account`, `invalid_amount`, `invalid_idempotency_key`,
-`same_account_transfer`, `unknown_account`, `idempotency_conflict`,
+Possible `error` values include `daily_transfer_limit_exceeded`,
+`transfer_amount_exceeds_limit`, `debit_timeout`, `insufficient_funds`,
+`credit_failed`, `invalid_amount`, `invalid_idempotency_key`,
+`same_balance_transfer`, `unknown_balance`, `idempotency_conflict`, and
 `idempotency_in_progress_timeout`.
 
 Idempotency behavior:
+
 - The same `idempotency_key` with the same `src`, `dst`, and `amount` returns
   the first completed response, including a failure response.
 - A duplicate request that arrives while the first request is still running
-  waits for that first response.
+  waits for the first response.
 - Reusing an `idempotency_key` with a different `src`, `dst`, or `amount`
   returns `idempotency_conflict`.
-- Cached idempotency results are retained in memory for approximately 60 seconds.
+- Cached idempotency results are retained in memory for about 60 seconds.
 
 Validation behavior:
-- `src` and `dst` must be known accounts.
+
+- `src` and `dst` must be known operational balances.
 - `src` and `dst` must differ.
-- `amount` must be a positive integer.
-- `idempotency_key` must be a non-empty string.
+- `amount` must be a positive integer minor-unit amount.
+- `idempotency_key` must be a non-empty provider reference.
 
 ### BALANCE
 
-Proxies to the account service.
+Proxies to the ledger service.
 
 **Request:**
+
 ```json
 { "op": "BALANCE" }
 ```
-
-**Response:** forwarded from account service (see below).
 
 ### STATS
 
 Returns gateway-internal counters.
 
 **Request:**
+
 ```json
 { "op": "STATS" }
 ```
 
 **Response:**
+
 ```json
 {
   "ok": 30,
   "fail": 20,
   "invalid": 1,
-  "fraud_denied": 2,
-  "fraud_timeout": 0,
+  "risk_denied": 2,
+  "risk_timeout": 0,
   "debit_timeout": 1,
-  "rollback_ok": 3,
-  "rollback_failed": 1,
-  "rollback_retries": 4
+  "compensation_ok": 3,
+  "compensation_failed": 1,
+  "compensation_retries": 4
 }
 ```
 
----
-
-## Account Service
+## Ledger Service
 
 Default local address: `127.0.0.1:9300`.
 
@@ -121,94 +125,59 @@ SQLite-backed. All write operations are wrapped in transactions with a
 
 ### DEBIT
 
-Deducts `amount` from `account` and logs the transaction.
+Deducts `amount` from an operational balance and logs the transaction.
 
 **Request:**
+
 ```json
 {
   "op": "DEBIT",
-  "account": "A",
+  "account": "payout_available",
   "amount": 500,
   "tx_id": "tx-0001"
 }
 ```
 
 **Success:**
+
 ```json
 { "ok": true, "balance": 9500 }
 ```
 
 **Failure:**
+
 ```json
 { "ok": false, "error": "insufficient_funds" }
 ```
 
-Errors: `insufficient_funds`, `no_account`, `duplicate_tx`, `internal`.
-Direct service callers can also receive `invalid_request` for malformed account
-or amount fields.
+Errors: `insufficient_funds`, `duplicate_tx`, `rolled_back`, `internal`, and
+`invalid_request`.
 
 ### CREDIT
 
-Adds `amount` to `account`. Idempotent — replaying the same `tx_id`
-returns the previously recorded balance.
-
-**Request:**
-```json
-{
-  "op": "CREDIT",
-  "account": "B",
-  "amount": 500,
-  "tx_id": "tx-0001"
-}
-```
-
-**Response:**
-```json
-{ "ok": true, "balance": 10500 }
-```
-
-Direct service callers can receive `invalid_request` for malformed account or
-amount fields.
+Adds `amount` to an operational balance. Replaying the same `tx_id` returns the
+previously recorded balance.
 
 ### ROLLBACK
 
-Reverses a prior debit. Looks up the original debit by `tx_id`, then
-credits the amount back. Idempotent — replaying returns the same result.
-
-**Request:**
-```json
-{
-  "op": "ROLLBACK",
-  "tx_id": "tx-0001"
-}
-```
-
-**Success:**
-```json
-{ "ok": true, "balance": 10000 }
-```
-
-When no debit exists yet, rollback records a tombstone so a racing debit with
-the same transaction id cannot commit later.
-
-**Failure:**
-```json
-{ "ok": false, "error": "internal" }
-```
+Compensates a prior debit. If no debit exists yet, it records a tombstone so a
+racing debit with the same transaction id cannot commit later.
 
 ### BALANCE
 
-Returns all account balances.
-
-**Request:**
-```json
-{ "op": "BALANCE" }
-```
+Returns all operational balances.
 
 **Response:**
+
 ```json
 {
-  "balances": { "A": 9500, "B": 10500, "C": 10000, "D": 10000, "E": 10000 },
+  "balances": {
+    "collection_pending": 9500,
+    "payout_available": 10500,
+    "settlement_bank": 10000,
+    "dispute_reserve": 10000,
+    "ops_float": 10000
+  },
   "total": 50000
 }
 ```
@@ -217,30 +186,7 @@ Returns all account balances.
 
 Returns the full transaction log, ordered by creation time.
 
-**Request:**
-```json
-{ "op": "TX_LOG" }
-```
-
-**Response:**
-```json
-{
-  "entries": [
-    {
-      "tx_id": "tx-0001",
-      "op": "debit",
-      "account_id": "A",
-      "amount": 500,
-      "balance_after": 9500,
-      "created_at": 1234567890
-    }
-  ]
-}
-```
-
----
-
-## Fraud Service
+## Risk Service
 
 Default local address: `127.0.0.1:9200`.
 
@@ -248,46 +194,47 @@ Stateless across restarts. Tracks velocity in memory.
 
 ### CHECK
 
-Evaluates whether a transfer should be allowed based on:
-1. **Velocity limit** — max `BANK_VELOCITY_LIMIT` transfers per source
-   account within a sliding `BANK_VELOCITY_WINDOW`-second window.
-2. **Amount cap** — single transfer must not exceed `BANK_SINGLE_TX_LIMIT`.
+Evaluates whether a ledger movement should be allowed based on:
+
+1. **Velocity limit**: max `BANK_VELOCITY_LIMIT` movements per source balance
+   within a sliding `BANK_VELOCITY_WINDOW`-second window.
+2. **Amount cap**: single movement must not exceed `BANK_SINGLE_TX_LIMIT`.
 
 **Request:**
+
 ```json
 {
   "op": "CHECK",
-  "src": "A",
-  "dst": "B",
+  "src": "payout_available",
+  "dst": "settlement_bank",
   "amount": 500
 }
 ```
 
 **Approved:**
+
 ```json
 { "approved": true }
 ```
 
 **Denied:**
+
 ```json
-{ "approved": false, "reason": "velocity_exceeded" }
+{ "approved": false, "reason": "daily_transfer_limit_exceeded" }
 ```
 
-Reasons: `velocity_exceeded`, `amount_exceeded`.
-
----
+Reasons: `daily_transfer_limit_exceeded`,
+`transfer_amount_exceeds_limit`.
 
 ## Error Handling
 
 | Scenario | Gateway behavior |
-|---|---|
-| Fraud service unreachable | Proceeds (fail-open) |
-| Fraud denied | Returns error, no money moved |
-| Debit timeout | Attempts rollback, returns error |
-| Credit timeout/failure | Rolls back the debit (3 retries, exponential backoff) |
-| Rollback exhausted | Logs `SERVICE name=gateway event=rollback_failed tx_id=...`, money in limbo |
-
----
+| --- | --- |
+| Risk service unreachable | Proceeds fail-open so downstream ledger invariants are still tested |
+| Risk denied | Returns error, no funds moved |
+| Debit timeout | Attempts compensation, returns error |
+| Credit timeout/failure | Compensates the debit with retry/backoff |
+| Compensation exhausted | Logs `SERVICE name=gateway event=compensation_failed tx_id=...` |
 
 ## SQLite Schema
 

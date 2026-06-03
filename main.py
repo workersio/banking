@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Starts all services, runs transfers, and checks invariants.
+"""Starts all services, runs payment-operation flows, and checks invariants.
 
-Spawns gateway, accounts, and fraud as separate processes, generates a
-batch of transfers, sends them with configurable concurrency, then reads
-the SQLite database directly to verify invariants.
+Spawns gateway, ledger, and risk-control processes, generates a batch of
+settlement and payout movements, sends them with configurable concurrency,
+then reads the SQLite database directly to verify invariants.
 """
 
 from __future__ import annotations
@@ -48,6 +48,10 @@ class TransferPhase:
     name: str
     transfers: list[dict[str, Any]]
     concurrency: int
+
+    @property
+    def operations(self) -> list[dict[str, Any]]:
+        return self.transfers
 
 
 @dataclass
@@ -117,7 +121,7 @@ def _seed_value() -> str | int:
 
 
 def _run_id() -> str:
-    return os.environ.get("BANK_RUN_ID") or f"banking-{int(time.time() * 1000)}-{os.getpid()}"
+    return os.environ.get("BANK_RUN_ID") or f"payment-ops-{int(time.time() * 1000)}-{os.getpid()}"
 
 
 def _gateway_timeout() -> float:
@@ -145,7 +149,7 @@ def _rpc_to_gateway(msg: dict[str, Any], timeout: float | None = None) -> dict[s
 
 
 def make_transfer(src: str, dst: str, amount: int, idempotency_key: str) -> dict[str, Any]:
-    """Build a gateway TRANSFER request."""
+    """Build a gateway TRANSFER request for one provider ledger movement."""
     return {
         "op": "TRANSFER",
         "src": src,
@@ -153,6 +157,11 @@ def make_transfer(src: str, dst: str, amount: int, idempotency_key: str) -> dict
         "amount": amount,
         "idempotency_key": idempotency_key,
     }
+
+
+def make_operation(src: str, dst: str, amount: int, idempotency_key: str) -> dict[str, Any]:
+    """Build a provider ledger movement request."""
+    return make_transfer(src, dst, amount, idempotency_key)
 
 
 def choose_destination(rng: random.Random, src: str) -> str:
@@ -177,6 +186,28 @@ def make_random_transfer(
     return make_transfer(src, dst, amount, f"{key_prefix}-{index:04d}")
 
 
+def make_random_operation(
+    rng: random.Random,
+    index: int,
+    *,
+    key_prefix: str,
+    source: str | None = None,
+    destination: str | None = None,
+    amount_min: int = 100,
+    amount_max: int = 2000,
+) -> dict[str, Any]:
+    """Build a randomized provider ledger movement request."""
+    return make_random_transfer(
+        rng,
+        index,
+        key_prefix=key_prefix,
+        source=source,
+        destination=destination,
+        amount_min=amount_min,
+        amount_max=amount_max,
+    )
+
+
 def make_random_transfers(
     rng: random.Random,
     count: int,
@@ -198,14 +229,44 @@ def make_random_transfers(
     ]
 
 
+def make_random_operations(
+    rng: random.Random,
+    count: int,
+    *,
+    key_prefix: str,
+    start_index: int = 0,
+    amount_min: int = 100,
+    amount_max: int = 2000,
+) -> list[dict[str, Any]]:
+    """Build randomized provider ledger movement requests."""
+    return make_random_transfers(
+        rng,
+        count,
+        key_prefix=key_prefix,
+        start_index=start_index,
+        amount_min=amount_min,
+        amount_max=amount_max,
+    )
+
+
 def duplicate_transfer(transfer: dict[str, Any]) -> dict[str, Any]:
-    """Return a client retry that preserves the idempotency key."""
+    """Return a provider retry that preserves the idempotency key/reference."""
     return dict(transfer)
 
 
+def duplicate_operation(operation: dict[str, Any]) -> dict[str, Any]:
+    """Return a provider retry that preserves the idempotency key/reference."""
+    return duplicate_transfer(operation)
+
+
 def transfer_phase(name: str, transfers: list[dict[str, Any]], concurrency: int) -> TransferPhase:
-    """Build a client submission phase with its own concurrency level."""
+    """Build a submission phase with its own concurrency level."""
     return TransferPhase(name=name, transfers=transfers, concurrency=concurrency)
+
+
+def operation_phase(name: str, operations: list[dict[str, Any]], concurrency: int) -> TransferPhase:
+    """Build a payment-operation submission phase with its own concurrency level."""
+    return transfer_phase(name, operations, concurrency)
 
 
 def _summarize_transfer_plan(
@@ -218,10 +279,10 @@ def _summarize_transfer_plan(
     total_amount = sum(t["amount"] for t in transfers)
     summary = {
         "generated": len(transfers),
-        "total_amount_cents": total_amount,
-        "unique_routes": len(routes),
-        "top_routes": dict(routes.most_common(SAMPLE_LIMIT)),
-        "source_counts": dict(sorted(sources.items())),
+        "total_amount_minor_units": total_amount,
+        "unique_ledger_routes": len(routes),
+        "top_ledger_routes": dict(routes.most_common(SAMPLE_LIMIT)),
+        "source_balance_counts": dict(sorted(sources.items())),
         "phases": {phase.name: len(phase.transfers) for phase in phases},
         "phase_concurrency": {phase.name: phase.concurrency for phase in phases},
     }
@@ -231,7 +292,7 @@ def _summarize_transfer_plan(
 
 
 def _print_transfer_samples(transfers: list[dict[str, Any]]) -> None:
-    print("Transfer samples:", flush=True)
+    print("Ledger movement samples:", flush=True)
     for idx, transfer in enumerate(transfers[:SAMPLE_LIMIT], start=1):
         print(
             f"  #{idx:03d} {transfer['src']}->{transfer['dst']} "
@@ -240,7 +301,11 @@ def _print_transfer_samples(transfers: list[dict[str, Any]]) -> None:
         )
     remaining = len(transfers) - SAMPLE_LIMIT
     if remaining > 0:
-        print(f"  ... {remaining} more transfers omitted", flush=True)
+        print(f"  ... {remaining} more ledger movements omitted", flush=True)
+
+
+def _print_operation_samples(operations: list[dict[str, Any]]) -> None:
+    _print_transfer_samples(operations)
 
 
 def _fire_transfers(transfers: list[dict[str, Any]], concurrency: int) -> TransferBatchResult:
@@ -379,13 +444,13 @@ def _check_idempotency(
             violations[key] = {"tx_ids": tx_ids, "errors": errors}
     passed = len(violations) == 0
     summary = (
-        "Duplicate idempotency keys resolved to one consistent outcome."
+        "Duplicate provider references resolved to one consistent outcome."
         if passed
-        else f"{len(violations)} idempotency key(s) produced inconsistent outcomes: {', '.join(sorted(violations)[:5])}."
+        else f"{len(violations)} duplicate reference(s) produced inconsistent outcomes: {', '.join(sorted(violations)[:5])}."
     )
     return invariants.CheckResult(
         id="I5",
-        name="IdempotencyKeysAreConsistent",
+        name="DuplicateReferencesResolveOnce",
         passed=passed,
         summary=summary,
         details={
@@ -404,7 +469,7 @@ def _safe_check_idempotency(
     except Exception as exc:
         return invariants.CheckResult(
             id="I5",
-            name="IdempotencyKeysAreConsistent",
+            name="DuplicateReferencesResolveOnce",
             passed=False,
             summary=f"Idempotency invariant check crashed instead of completing: {type(exc).__name__}: {exc}.",
             details={"exception": repr(exc)},
@@ -443,33 +508,37 @@ def _tx_operation_counts(tx_log: list[dict[str, Any]]) -> dict[str, int]:
 def _print_run_configuration(
     run_id: str,
     *,
-    transfer_count: int,
+    transfer_count: int | None = None,
+    operation_count: int | None = None,
     concurrency: int,
     settle_s: int,
 ) -> None:
+    movement_count = operation_count if operation_count is not None else transfer_count
+    if movement_count is None:
+        movement_count = 0
     _print_kv_table("Run configuration", {
         "run_id": run_id,
         "pid": os.getpid(),
         "db_path": config.DB_PATH,
         "db_exists_at_start": os.path.exists(config.DB_PATH),
-        "accounts": ",".join(config.ACCOUNTS),
+        "operational_balances": ",".join(config.ACCOUNTS),
         "initial_balance": config.INITIAL_BALANCE,
         "initial_total": config.INITIAL_TOTAL,
-        "transfers": transfer_count,
+        "ledger_movements": movement_count,
         "concurrency": concurrency,
         "settle_s": settle_s,
-        "fraud_timeout_s": config.FRAUD_TIMEOUT,
+        "risk_timeout_s": config.FRAUD_TIMEOUT,
         "account_timeout_s": config.ACCT_TIMEOUT,
         "velocity_window_s": config.VELOCITY_WINDOW,
         "velocity_limit": config.VELOCITY_LIMIT,
-        "single_tx_limit": config.SINGLE_TX_LIMIT,
-        "rollback_retries": config.ROLLBACK_MAX_RETRIES,
-        "rollback_base_s": config.ROLLBACK_BASE_S,
+        "single_movement_limit": config.SINGLE_TX_LIMIT,
+        "compensation_retries": config.ROLLBACK_MAX_RETRIES,
+        "compensation_base_s": config.ROLLBACK_BASE_S,
     })
     _print_kv_table("Service addresses", {
         "gateway": _format_addr(config.GATEWAY_ADDR),
-        "fraud": _format_addr(config.FRAUD_ADDR),
-        "accounts": _format_addr(config.ACCOUNTS_ADDR),
+        "risk": _format_addr(config.FRAUD_ADDR),
+        "ledger": _format_addr(config.ACCOUNTS_ADDR),
     })
 
 
@@ -563,9 +632,9 @@ def run_banking_app(
     transfers = [transfer for phase in phases for transfer in phase.transfers]
     max_concurrency = max((phase.concurrency for phase in phases), default=0)
     runtime_failures: list[dict[str, Any]] = []
-    print("BANKING_VERSION: 1", flush=True)
+    print("PAYMENT_OPS_VERSION: 1", flush=True)
 
-    _section("Banking Run")
+    _section("Payment Operations Run")
     _line("RUN", id=run_id, version=1, started_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     _print_run_configuration(
         run_id,
@@ -581,8 +650,8 @@ def run_banking_app(
     _section("Service Startup")
     stop = mp.Event()
     procs = [
-        ("accounts", mp.Process(name="accounts", target=run_accounts, args=(stop,))),
-        ("fraud", mp.Process(name="fraud", target=run_fraud, args=(stop,))),
+        ("ledger", mp.Process(name="ledger", target=run_accounts, args=(stop,))),
+        ("risk", mp.Process(name="risk", target=run_fraud, args=(stop,))),
         ("gateway", mp.Process(name="gateway", target=run_gateway, args=(stop,))),
     ]
     for name, proc in procs:
@@ -593,20 +662,20 @@ def run_banking_app(
     _record_startup_health(start_ns, procs, runtime_failures)
     startup_failed = len(runtime_failures) > 0
 
-    _section("Transfer Plan")
-    _print_kv_table("Generated transfers", _summarize_transfer_plan(phases, plan_summary))
+    _section("Scenario Plan")
+    _print_kv_table("Generated ledger movements", _summarize_transfer_plan(phases, plan_summary))
     _print_transfer_samples(transfers)
 
-    _section("Transfer Execution")
+    _section("Scenario Execution")
     if startup_failed:
-        _event(start_ns, "transfers", "skipped because service startup failed")
+        _event(start_ns, "operations", "skipped because service startup failed")
         batch = _failed_batch(transfers, "startup_failed")
     else:
         phase_results = []
         for phase in phases:
             _event(
                 start_ns,
-                "transfers",
+                "operations",
                 "submitting phase",
                 name=phase.name,
                 attempted=len(phase.transfers),
@@ -616,7 +685,7 @@ def run_banking_app(
             phase_results.append(phase_batch)
             _event(
                 start_ns,
-                "transfers",
+                "operations",
                 "phase complete",
                 name=phase.name,
                 attempted=phase_batch.attempted,
@@ -627,7 +696,7 @@ def run_banking_app(
         batch = _combine_batch_results(phase_results)
     _event(
         start_ns,
-        "transfers",
+        "operations",
         "batch complete",
         attempted=batch.attempted,
         succeeded=batch.succeeded,
@@ -635,13 +704,13 @@ def run_banking_app(
         duration_ms=batch.duration_ms,
     )
     if batch.error_counts:
-        _print_kv_table("Transfer errors", dict(sorted(batch.error_counts.items())))
-        _print_kv_table("Sample failed transfers", {
+        _print_kv_table("Operation errors", dict(sorted(batch.error_counts.items())))
+        _print_kv_table("Sample failed operations", {
             f"failure_{idx}": failure
             for idx, failure in enumerate(batch.sample_failures, start=1)
         })
     else:
-        print("Transfer errors: none", flush=True)
+        print("Operation errors: none", flush=True)
 
     if settle_s > 0:
         _event(start_ns, "settle", "waiting for services to finish async work", seconds=settle_s)
@@ -671,7 +740,7 @@ def run_banking_app(
             start_ns,
             "database",
             "read complete",
-            accounts=len(snapshot.balances),
+            operational_balances=len(snapshot.balances),
             transactions=len(snapshot.tx_log),
         )
     _print_kv_table("Balances", {
@@ -713,28 +782,28 @@ def run_banking_app(
         attempted=batch.attempted,
         succeeded=batch.succeeded,
         failed=batch.failed,
-        transfer_duration_ms=batch.duration_ms,
+        operation_duration_ms=batch.duration_ms,
         db_read="fail" if snapshot.error else "ok",
         assertions_failed=failed_assertions,
         runtime_failures=len(runtime_failures),
         gateway_stats="ok" if stats else "missing",
     )
     if batch.error_counts:
-        _line("TRANSFER_ERRORS", **dict(sorted(batch.error_counts.items())))
+        _line("OPERATION_ERRORS", **dict(sorted(batch.error_counts.items())))
     else:
-        _line("TRANSFER_ERRORS", none=True)
+        _line("OPERATION_ERRORS", none=True)
     if stats:
         _line("GATEWAY_STATS", **dict(sorted(stats.items())))
     else:
         _line("GATEWAY_STATS", unavailable=True)
 
-    print(f"transfers={batch.attempted} succeeded={batch.succeeded} failed={batch.failed}", flush=True)
-    print(f"fraud_denied={stats.get('fraud_denied', 0)} "
-          f"fraud_timeout={stats.get('fraud_timeout', 0)}", flush=True)
+    print(f"operations={batch.attempted} succeeded={batch.succeeded} failed={batch.failed}", flush=True)
+    print(f"risk_denied={stats.get('risk_denied', 0)} "
+          f"risk_timeout={stats.get('risk_timeout', 0)}", flush=True)
     print(f"debit_timeout={stats.get('debit_timeout', 0)}", flush=True)
-    print(f"rollback_ok={stats.get('rollback_ok', 0)} "
-          f"rollback_failed={stats.get('rollback_failed', 0)} "
-          f"rollback_retries={stats.get('rollback_retries', 0)}", flush=True)
+    print(f"compensation_ok={stats.get('compensation_ok', 0)} "
+          f"compensation_failed={stats.get('compensation_failed', 0)} "
+          f"compensation_retries={stats.get('compensation_retries', 0)}", flush=True)
 
     bal_str = " ".join(f"{acct}={snapshot.balances.get(acct, '?')}" for acct in config.ACCOUNTS)
     print(f"BALANCES {bal_str} total={snapshot.total}", flush=True)

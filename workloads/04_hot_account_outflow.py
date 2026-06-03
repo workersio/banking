@@ -12,8 +12,8 @@ from common import banking, config, rng, run_workload
 def build() -> list[banking.TransferPhase]:
     source_rng = rng("workload-04")
     source = source_rng.choice(config.ACCOUNTS)
-    transfers = [
-        banking.make_random_transfer(
+    operations = [
+        banking.make_random_operation(
             source_rng,
             index,
             key_prefix="hot-outflow",
@@ -23,8 +23,8 @@ def build() -> list[banking.TransferPhase]:
         )
         for index in range(90)
     ]
-    return [banking.transfer_phase(f"hot_account_{source}_outflow", transfers, concurrency=5)]
+    return [banking.operation_phase(f"hot_balance_{source}_payout_outflow", operations, concurrency=5)]
 
 
 if __name__ == "__main__":
-    sys.exit(run_workload("hot_account_outflow", build()))
+    sys.exit(run_workload("hot_balance_payout_outflow", build()))

@@ -13,7 +13,7 @@ def build() -> list[banking.TransferPhase]:
     source_rng = rng("workload-09")
     source = source_rng.choice(config.ACCOUNTS)
     drain = [
-        banking.make_random_transfer(
+        banking.make_random_operation(
             source_rng,
             index,
             key_prefix="drain",
@@ -23,7 +23,7 @@ def build() -> list[banking.TransferPhase]:
         )
         for index in range(45)
     ]
-    cross_traffic = banking.make_random_transfers(
+    cross_traffic = banking.make_random_operations(
         source_rng,
         100,
         key_prefix="reversal-cross",
@@ -31,8 +31,8 @@ def build() -> list[banking.TransferPhase]:
         amount_max=800,
     )
     return [
-        banking.transfer_phase(f"drain_{source}_parallel", drain, concurrency=5),
-        banking.transfer_phase("cross_account_followup", cross_traffic, concurrency=4),
+        banking.operation_phase(f"drain_{source}_parallel", drain, concurrency=5),
+        banking.operation_phase("cross_balance_followup", cross_traffic, concurrency=4),
     ]
 
 

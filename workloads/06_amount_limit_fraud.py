@@ -12,8 +12,8 @@ from common import banking, config, rng, run_workload
 def build() -> list[banking.TransferPhase]:
     source_rng = rng("workload-06")
     source = source_rng.choice(config.ACCOUNTS)
-    transfers = [
-        banking.make_random_transfer(
+    operations = [
+        banking.make_random_operation(
             source_rng,
             index,
             key_prefix="amount-limit",
@@ -23,8 +23,8 @@ def build() -> list[banking.TransferPhase]:
         )
         for index in range(40)
     ]
-    return [banking.transfer_phase("single_transaction_limit_probes", transfers, concurrency=4)]
+    return [banking.operation_phase("single_transaction_limit_probes", operations, concurrency=4)]
 
 
 if __name__ == "__main__":
-    sys.exit(run_workload("amount_limit_fraud", build()))
+    sys.exit(run_workload("amount_limit_risk", build()))

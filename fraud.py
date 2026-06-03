@@ -1,8 +1,8 @@
-"""Fraud service — velocity-based rate limiting.
+"""Risk service — velocity and amount controls for payout/settlement flows.
 
-Tracks per-account transfer frequency using in-memory sliding windows.
-Denies transfers that exceed the velocity limit or single-transaction
-amount cap. A background sweeper evicts stale entries.
+Tracks per-balance movement frequency using in-memory sliding windows.
+Denies movements that exceed velocity or single-transaction amount caps.
+A background sweeper evicts stale entries.
 """
 
 from __future__ import annotations
@@ -62,12 +62,12 @@ class FraudHandler(socketserver.BaseRequestHandler):
 
             if len(filtered) >= config.VELOCITY_LIMIT:
                 self.server.history[src] = filtered
-                self._reply({"approved": False, "reason": "velocity_exceeded"})
+                self._reply({"approved": False, "reason": "daily_transfer_limit_exceeded"})
                 return
 
             if amount > config.SINGLE_TX_LIMIT:
                 self.server.history[src] = filtered
-                self._reply({"approved": False, "reason": "amount_exceeded"})
+                self._reply({"approved": False, "reason": "transfer_amount_exceeds_limit"})
                 return
 
             filtered.append(now)
@@ -96,7 +96,7 @@ def _sweeper(srv: FraudServer, stop: mp.Event) -> None:
 def run_fraud(stop: mp.Event) -> None:
     srv = FraudServer(config.FRAUD_ADDR)
     print(
-        f"SERVICE name=fraud event=listening "
+        f"SERVICE name=risk event=listening "
         f"addr={config.FRAUD_ADDR[0]}:{config.FRAUD_ADDR[1]} pid={os.getpid()}",
         flush=True,
     )

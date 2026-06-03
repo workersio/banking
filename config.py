@@ -17,7 +17,13 @@ else:
     FRAUD_ADDR    = ("127.0.0.20", 9000)
     ACCOUNTS_ADDR = ("127.0.0.30", 9000)
 
-ACCOUNTS      = ["A", "B", "C", "D", "E"]
+ACCOUNTS      = [
+    "collection_pending",
+    "payout_available",
+    "settlement_bank",
+    "dispute_reserve",
+    "ops_float",
+]
 INITIAL_BALANCE = int(os.environ.get("BANK_INITIAL_BALANCE", "10000"))
 INITIAL_TOTAL   = INITIAL_BALANCE * len(ACCOUNTS)
 

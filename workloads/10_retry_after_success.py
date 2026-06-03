@@ -11,7 +11,7 @@ from common import banking, every_nth_retry, rng, run_workload
 
 def build() -> list[banking.TransferPhase]:
     source_rng = rng("workload-10")
-    originals = banking.make_random_transfers(
+    originals = banking.make_random_operations(
         source_rng,
         160,
         key_prefix="retry-after-success",
@@ -20,8 +20,8 @@ def build() -> list[banking.TransferPhase]:
     )
     retries = every_nth_retry(originals, 5)
     return [
-        banking.transfer_phase("originals_parallel", originals, concurrency=4),
-        banking.transfer_phase("client_retries_after_originals", retries, concurrency=1),
+        banking.operation_phase("originals_parallel", originals, concurrency=4),
+        banking.operation_phase("duplicate_reference_retries_after_originals", retries, concurrency=1),
     ]
 
 

@@ -1,11 +1,11 @@
 """Post-run invariant checks verified by reading SQLite directly.
 
-I1: MoneyConservation — total money in the system is constant.
-I2: BalancesNeverNegative — no account balance goes below zero.
-I3: TransfersAreAtomic — every debit has a matching credit or rollback.
-I4: LedgerMatchesBalances — replaying the log reproduces live balances.
-I6: LedgerTransactionShape — each transaction has one valid terminal shape.
-I7: LedgerBalanceAfterConsistent — each ledger row records the actual post-op balance.
+I1: FundsConservedAcrossLedger — provider ledger balances never create or lose funds.
+I2: AvailableBalancesNeverNegative — no operational balance is overdrawn.
+I3: SettlementPayoutsAreAtomic — every debit reaches a credit or compensation.
+I4: LedgerReplayMatchesBalances — replaying the ledger reproduces live balances.
+I6: TerminalLedgerShapeIsValid — each transaction has one valid terminal shape.
+I7: BalanceAfterSupportsReconciliation — each row records the actual post-op balance.
 """
 
 from __future__ import annotations
@@ -61,13 +61,13 @@ def check_i1(balances: dict[str, int], total: int) -> CheckResult:
     delta = total - expected
     passed = delta == 0
     summary = (
-        f"System total stayed at {total} cents."
+        f"Ledger funds stayed conserved at {total} minor units."
         if passed
-        else f"System total changed by {delta} cents: expected {expected}, observed {total}."
+        else f"Ledger funds changed by {delta} minor units: expected {expected}, observed {total}."
     )
     return CheckResult(
         id="I1",
-        name="MoneyConservation",
+        name="FundsConservedAcrossLedger",
         passed=passed,
         summary=summary,
         details={"actual_total": total, "expected_total": expected, "delta": delta},
@@ -78,13 +78,13 @@ def check_i2(balances: dict[str, int]) -> CheckResult:
     negatives = {a: b for a, b in balances.items() if b < 0}
     passed = len(negatives) == 0
     summary = (
-        "No account ended with a negative balance."
+        "No operational balance ended negative."
         if passed
-        else f"{len(negatives)} account balance(s) ended negative: {', '.join(sorted(negatives)[:5])}."
+        else f"{len(negatives)} operational balance(s) ended negative: {', '.join(sorted(negatives)[:5])}."
     )
     return CheckResult(
         id="I2",
-        name="BalancesNeverNegative",
+        name="AvailableBalancesNeverNegative",
         passed=passed,
         summary=summary,
         details={"negative_accounts": negatives},
@@ -104,13 +104,13 @@ def check_i3(tx_log: list[dict]) -> CheckResult:
 
     passed = len(orphaned) == 0
     summary = (
-        "Every debit was matched by a credit or rollback."
+        "Every settlement or payout debit reached a credit or compensation."
         if passed
-        else f"{len(orphaned)} debit(s) were missing a credit or rollback; sample tx ids: {', '.join(orphaned[:5])}."
+        else f"{len(orphaned)} debit(s) were missing a credit or compensation; sample tx ids: {', '.join(orphaned[:5])}."
     )
     return CheckResult(
         id="I3",
-        name="TransfersAreAtomic",
+        name="SettlementPayoutsAreAtomic",
         passed=passed,
         summary=summary,
         details={
@@ -165,7 +165,7 @@ def check_i4(balances: dict[str, int], tx_log: list[dict]) -> CheckResult:
 
     passed = len(mismatches) == 0 and len(malformed_rows) == 0
     if passed:
-        summary = "Ledger replay matched every live account balance."
+        summary = "Ledger replay matched every live operational balance."
     elif malformed_rows:
         summary = (
             f"Ledger replay found {len(mismatches)} balance mismatch(es) "
@@ -173,12 +173,12 @@ def check_i4(balances: dict[str, int], tx_log: list[dict]) -> CheckResult:
         )
     else:
         summary = (
-            f"{len(mismatches)} account balance(s) differed from ledger replay: "
+            f"{len(mismatches)} operational balance(s) differed from ledger replay: "
             f"{', '.join(sorted(mismatches)[:5])}."
         )
     return CheckResult(
         id="I4",
-        name="LedgerMatchesBalances",
+        name="LedgerReplayMatchesBalances",
         passed=passed,
         summary=summary,
         details={
@@ -226,13 +226,13 @@ def check_i6(tx_log: list[dict]) -> CheckResult:
 
     passed = len(malformed) == 0
     summary = (
-        "Every transaction had a valid completed, compensated, or rollback-tombstone shape."
+        "Every transaction had a valid completed, compensated, or compensation-tombstone shape."
         if passed
         else f"{len(malformed)} transaction(s) had malformed ledger shape: {', '.join(sorted(malformed)[:5])}."
     )
     return CheckResult(
         id="I6",
-        name="LedgerTransactionShape",
+        name="TerminalLedgerShapeIsValid",
         passed=passed,
         summary=summary,
         details={
@@ -284,13 +284,13 @@ def check_i7(tx_log: list[dict]) -> CheckResult:
 
     passed = len(mismatches) == 0
     summary = (
-        "Every ledger row's balance_after matched per-account replay."
+        "Every ledger row's balance_after matched per-balance replay."
         if passed
         else f"{len(mismatches)} sampled ledger row(s) had inconsistent balance_after values."
     )
     return CheckResult(
         id="I7",
-        name="LedgerBalanceAfterConsistent",
+        name="BalanceAfterSupportsReconciliation",
         passed=passed,
         summary=summary,
         details={
@@ -302,10 +302,10 @@ def check_i7(tx_log: list[dict]) -> CheckResult:
 
 def run_all(balances: dict[str, int], total: int, tx_log: list[dict]) -> list[CheckResult]:
     return [
-        _run_check("I1", "MoneyConservation", lambda: check_i1(balances, total)),
-        _run_check("I2", "BalancesNeverNegative", lambda: check_i2(balances)),
-        _run_check("I3", "TransfersAreAtomic", lambda: check_i3(tx_log)),
-        _run_check("I4", "LedgerMatchesBalances", lambda: check_i4(balances, tx_log)),
-        _run_check("I6", "LedgerTransactionShape", lambda: check_i6(tx_log)),
-        _run_check("I7", "LedgerBalanceAfterConsistent", lambda: check_i7(tx_log)),
+        _run_check("I1", "FundsConservedAcrossLedger", lambda: check_i1(balances, total)),
+        _run_check("I2", "AvailableBalancesNeverNegative", lambda: check_i2(balances)),
+        _run_check("I3", "SettlementPayoutsAreAtomic", lambda: check_i3(tx_log)),
+        _run_check("I4", "LedgerReplayMatchesBalances", lambda: check_i4(balances, tx_log)),
+        _run_check("I6", "TerminalLedgerShapeIsValid", lambda: check_i6(tx_log)),
+        _run_check("I7", "BalanceAfterSupportsReconciliation", lambda: check_i7(tx_log)),
     ]

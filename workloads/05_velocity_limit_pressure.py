@@ -12,8 +12,8 @@ from common import banking, config, rng, run_workload
 def build() -> list[banking.TransferPhase]:
     source_rng = rng("workload-05")
     source = source_rng.choice(config.ACCOUNTS)
-    transfers = [
-        banking.make_random_transfer(
+    operations = [
+        banking.make_random_operation(
             source_rng,
             index,
             key_prefix="velocity",
@@ -23,7 +23,7 @@ def build() -> list[banking.TransferPhase]:
         )
         for index in range(24)
     ]
-    return [banking.transfer_phase(f"velocity_limited_{source}", transfers, concurrency=1)]
+    return [banking.operation_phase(f"velocity_limited_{source}", operations, concurrency=1)]
 
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Seed-sweep demo: conservation failure under account-path tail latency.
+"""Seed-sweep demo: conservation failure under ledger-path tail latency.
 
-Run this with ``09_accounts_settlement_tail`` at depth 5. The run seed
-chooses a realistic operating profile. Most seeds model a normal transfer
+Run this with ``09_ledger_settlement_tail`` at depth 5. The run seed
+chooses a realistic operating profile. Most seeds model a normal operation
 window. A small fraction model a stressed settlement window that can leave
-orphaned debits when account RPCs and rollback RPCs hit the same tail.
+orphaned debits when ledger RPCs and compensation RPCs hit the same tail.
 """
 
 from __future__ import annotations
@@ -60,28 +60,28 @@ from common import banking, config, reset_database, run_workload  # noqa: E402
 
 
 def _build_stressed_settlement(rng: random.Random) -> list[banking.TransferPhase]:
-    transfers = []
-    hot_sources = ["A", "B", "C"]
+    operations = []
+    hot_sources = config.ACCOUNTS[:3]
     for index in range(96):
         src = hot_sources[index % len(hot_sources)]
         dst = banking.choose_destination(rng, src)
         amount = rng.randint(35, 170)
-        transfers.append(
-            banking.make_transfer(src, dst, amount, f"conservation-stress-{SEED}-{index:04d}")
+        operations.append(
+            banking.make_operation(src, dst, amount, f"conservation-stress-{SEED}-{index:04d}")
         )
-    return [banking.transfer_phase("stressed_settlement_window", transfers, concurrency=24)]
+    return [banking.operation_phase("stressed_settlement_window", operations, concurrency=24)]
 
 
 def _build_normal_settlement(rng: random.Random) -> list[banking.TransferPhase]:
-    transfers = []
+    operations = []
     for index in range(32):
         src = rng.choice(config.ACCOUNTS)
         dst = banking.choose_destination(rng, src)
         amount = rng.randint(25, 150)
-        transfers.append(
-            banking.make_transfer(src, dst, amount, f"conservation-normal-{SEED}-{index:04d}")
+        operations.append(
+            banking.make_operation(src, dst, amount, f"conservation-normal-{SEED}-{index:04d}")
         )
-    return [banking.transfer_phase("normal_settlement_window", transfers, concurrency=4)]
+    return [banking.operation_phase("normal_settlement_window", operations, concurrency=4)]
 
 
 def build() -> list[banking.TransferPhase]:
@@ -106,7 +106,7 @@ if __name__ == "__main__":
                 "seed": SEED,
                 "profile_score": round(PROFILE_SCORE, 6),
                 "profile": profile,
-                "expected_fault": "09_accounts_settlement_tail",
+                "expected_fault": "09_ledger_settlement_tail",
             },
             settle_s=0 if STRESSED else 2,
         )

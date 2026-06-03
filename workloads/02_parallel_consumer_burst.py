@@ -11,14 +11,14 @@ from common import banking, rng, run_workload
 
 def build() -> list[banking.TransferPhase]:
     source_rng = rng("workload-02")
-    warmup = banking.make_random_transfers(
+    warmup = banking.make_random_operations(
         source_rng,
         40,
         key_prefix="burst-warmup",
         amount_min=50,
         amount_max=400,
     )
-    burst = banking.make_random_transfers(
+    burst = banking.make_random_operations(
         source_rng,
         180,
         key_prefix="consumer-burst",
@@ -26,8 +26,8 @@ def build() -> list[banking.TransferPhase]:
         amount_max=500,
     )
     return [
-        banking.transfer_phase("warmup_sequential", warmup, concurrency=1),
-        banking.transfer_phase("consumer_parallel_burst", burst, concurrency=6),
+        banking.operation_phase("warmup_sequential", warmup, concurrency=1),
+        banking.operation_phase("payout_parallel_burst", burst, concurrency=6),
     ]
 
 

@@ -11,40 +11,40 @@ from common import banking, config, every_nth_retry, rng, run_workload, split_co
 
 def build() -> list[banking.TransferPhase]:
     source_rng = rng("workload-07")
-    counts = split_counts(420, {"routine": 0.35, "merchant": 0.50, "fraud": 0.15})
+    counts = split_counts(420, {"routine": 0.35, "merchant": 0.50, "risk": 0.15})
 
-    routine = banking.make_random_transfers(
+    routine = banking.make_random_operations(
         source_rng,
         counts["routine"],
         key_prefix="mixed-routine",
         amount_min=100,
         amount_max=700,
     )
-    merchant = banking.make_random_transfers(
+    merchant = banking.make_random_operations(
         source_rng,
         counts["merchant"],
         key_prefix="mixed-merchant",
         amount_min=100,
         amount_max=850,
     )
-    fraud = [
-        banking.make_random_transfer(
+    risk = [
+        banking.make_random_operation(
             source_rng,
             index,
-            key_prefix="mixed-fraud",
+            key_prefix="mixed-risk",
             amount_min=config.SINGLE_TX_LIMIT + 1,
             amount_max=config.SINGLE_TX_LIMIT + 1200,
         )
-        for index in range(counts["fraud"])
+        for index in range(counts["risk"])
     ]
     validation = validation_probe_attempts(source_rng, "mixed-validation")
 
     return [
-        banking.transfer_phase("routine_sequential", routine, concurrency=1),
-        banking.transfer_phase("routine_retries_after_success", every_nth_retry(routine, 30), concurrency=1),
-        banking.transfer_phase("merchant_parallel_burst", merchant, concurrency=4),
-        banking.transfer_phase("fraud_amount_probes", fraud, concurrency=4),
-        banking.transfer_phase("client_validation_errors", validation, concurrency=2),
+        banking.operation_phase("routine_sequential", routine, concurrency=1),
+        banking.operation_phase("routine_retries_after_success", every_nth_retry(routine, 30), concurrency=1),
+        banking.operation_phase("merchant_parallel_burst", merchant, concurrency=4),
+        banking.operation_phase("risk_amount_probes", risk, concurrency=4),
+        banking.operation_phase("api_validation_errors", validation, concurrency=2),
     ]
 
 

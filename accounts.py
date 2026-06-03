@@ -1,4 +1,4 @@
-"""Account service — SQLite-backed balances and transaction log.
+"""Ledger service — SQLite-backed operational balances and transaction log.
 
 Exposes DEBIT, CREDIT, ROLLBACK, BALANCE, and TX_LOG operations over TCP.
 Uses WAL mode and explicit write transactions so balance changes and
@@ -283,7 +283,7 @@ def run_accounts(stop: mp.Event) -> None:
     _init_db()
     srv = AccountServer(config.ACCOUNTS_ADDR)
     print(
-        f"SERVICE name=accounts event=listening "
+        f"SERVICE name=ledger event=listening "
         f"addr={config.ACCOUNTS_ADDR[0]}:{config.ACCOUNTS_ADDR[1]} pid={os.getpid()}",
         flush=True,
     )
