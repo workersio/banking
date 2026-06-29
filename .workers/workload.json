@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "command": ["python3", ".workers/workload.py"],
+  "workingDirectory": "/workload",
+  "timeoutSeconds": 1200,
+  "outputLimitBytes": 1048576
+}
